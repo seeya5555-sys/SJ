@@ -1,7 +1,7 @@
 -- =============================================================
---  TRMT3 Ship Management System — Database Schema
+--  TRMT1 Ship Management System — Database Schema
 --  SQLite 3
---  Tanker Management Team 3, Sinokor Shipmanagement
+--  Tanker Management Team 1, Sinokor Shipmanagement
 -- =============================================================
 
 -- -------------------------------------------------------------

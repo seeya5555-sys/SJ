@@ -1,5 +1,5 @@
 """
-TRMT3 Ship Management System
+TRMT1 Ship Management System
 ────────────────────────────────────────────────────────────────
 Flask 메인 (DD Manager 스타일 — 단일 파일, 순수 SQL, ORM 없음)
 
@@ -14,6 +14,11 @@ import uuid
 import json
 import sqlite3
 import secrets
+import time
+import http.cookiejar
+import urllib.parse
+import urllib.request
+import urllib.error
 from functools import wraps
 from datetime import timedelta, date, datetime
 
@@ -1177,6 +1182,12 @@ def api_dashboard_cockpit():
 
 
 @app.route('/')
+def home():
+    # 로그인 후 첫 화면은 대시보드로 (Daily는 /daily)
+    return redirect(url_for('dashboard'))
+
+
+@app.route('/daily')
 @login_required
 def index():
     return render_template('index.html')
@@ -2193,6 +2204,10 @@ def api_vessel_create():
     for sid in sids:
         execute('INSERT OR IGNORE INTO supervisor_vessels (vessel_id, supervisor_id) VALUES (?, ?)',
                 (vid, sid))
+    try:
+        _refresh_ais_for_vessel_id(vid)
+    except Exception as e:
+        app.logger.warning('vessel AIS refresh failed for %s: %s', name, e)
     return jsonify({'id': vid}), 201
 
 
@@ -7330,7 +7345,7 @@ def api_ext_all():
     from datetime import datetime as _dt
     return jsonify({
         'generated_at': _dt.now().isoformat(timespec='seconds'),
-        'source': 'TRMT3',
+        'source': 'TRMT1',
         'vessels':           _ext_vessels(),
         'issues':            _ext_issues(),
         'condition_surveys': _ext_surveys(),
@@ -10277,7 +10292,7 @@ def _gemini_text(prompt, model=None):
         return None, 'parse:' + str(e)[:120]
 
 _MAIL_REPLY_HARNESS = (
- "You render You Seok Son's (Owner's Technical Superintendent, Sinokor Tanker Mgmt Team 3) Korean reply "
+ "You render You Seok Son's (Owner's Technical Superintendent, Sinokor Tanker Mgmt Team 1) Korean reply "
  "instruction into a polished English business email, matching his actual writing style.\n"
  "RULES:\n"
  "- The Korean instruction is the SOURCE OF TRUTH for content. Render it faithfully. "
@@ -11149,6 +11164,259 @@ def api_ext_shipwiki_push():
 
 # ───────────────────────── Fleet Map (대시보드) ─────────────────────────
 FLEET_MAP_FILE = os.path.join(INSTANCE_DIR, 'fleet_map.json')
+VESSELTRACKER_SECRET_FILE = os.path.join(INSTANCE_DIR, 'vesseltracker.json')
+
+
+def _json_response(req, timeout=25):
+    with urllib.request.urlopen(req, timeout=timeout) as res:
+        raw = res.read().decode('utf-8', 'replace')
+    return json.loads(raw) if raw else {}
+
+
+def _vt_creds():
+    """vesseltracker credential lookup. Values are kept outside source code."""
+    user = os.environ.get('VESSELTRACKER_USER')
+    pw = os.environ.get('VESSELTRACKER_PASS')
+    if user and pw:
+        return user, pw
+    paths = [
+        VESSELTRACKER_SECRET_FILE,
+        os.path.expanduser('~/.openclaw/secrets/vesseltracker.json'),
+    ]
+    for path in paths:
+        try:
+            with open(path, encoding='utf-8') as f:
+                d = json.load(f)
+            user = d.get('user') or d.get('username')
+            pw = d.get('pass') or d.get('password')
+            if user and pw:
+                return user, pw
+        except (FileNotFoundError, ValueError, OSError):
+            continue
+    return None, None
+
+
+def _vt_login_token():
+    user, pw = _vt_creds()
+    if not user or not pw:
+        return None
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    opener.addheaders = [('User-Agent', 'Mozilla/5.0 TRMT1 FleetMap')]
+    opener.open('https://www.vesseltracker.com/en/login.html', timeout=25).read()
+    body = urllib.parse.urlencode({
+        'username': user,
+        'password': pw,
+        'remember-me': 'true',
+        '0': '0',
+        'lang': 'en',
+    }).encode()
+    opener.open('https://www.vesseltracker.com/login.html', data=body, timeout=25).read()
+    for c in jar:
+        if c.name == 'cockpit_token' and c.value:
+            return c.value
+    return None
+
+
+def _vt_api(path, token, method='GET', payload=None):
+    url = 'https://restapi.vesseltracker.com/api/v1' + path
+    data = None
+    headers = {
+        'Authorization': token,
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 TRMT1 FleetMap',
+    }
+    if payload is not None:
+        data = json.dumps(payload).encode('utf-8')
+        headers['Content-Type'] = 'application/json'
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    return _json_response(req)
+
+
+def _vt_find_first_vessel(token, name, imo=None):
+    def vid(row):
+        return row.get('vesselId') or row.get('vessel_id') or row.get('id')
+
+    def best_from_rows(rows):
+        if not isinstance(rows, list):
+            return None
+        nkey = _vkey(name)
+        best = None
+        for row in rows:
+            if not isinstance(row, dict) or not vid(row):
+                continue
+            rimo = str(row.get('imo') or row.get('imoNumber') or '')
+            rname = row.get('name') or row.get('vesselName') or ''
+            if imo and rimo and str(imo).strip() == rimo.strip():
+                return int(vid(row))
+            if _vkey(rname) == nkey:
+                best = int(vid(row))
+        return best
+
+    try:
+        mv = _vt_api('/myVessels', token)
+        rows = []
+        for group in (mv.get('groups') or {}).values():
+            vessels = group.get('vessels') if isinstance(group, dict) else None
+            if isinstance(vessels, dict):
+                rows.extend(vessels.values())
+            elif isinstance(vessels, list):
+                rows.extend(vessels)
+        hit = best_from_rows(rows)
+        if hit:
+            return hit
+    except Exception:
+        pass
+
+    q = {'queryData': {'name': name, 'shipTypes': []}}
+    try:
+        data = _vt_api('/search/vessels/extended', token, method='POST', payload=q)
+    except Exception:
+        return None
+    rows = data.get('vessels') or data.get('results') or data.get('items') or data
+    if isinstance(rows, dict):
+        rows = rows.get('content') or rows.get('data') or []
+    return best_from_rows(rows)
+
+
+def _vt_extract_position(details):
+    if not isinstance(details, dict):
+        return None
+    if isinstance(details.get('data'), dict):
+        vals = list(details['data'].values())
+        if vals and isinstance(vals[0], dict):
+            details = vals[0]
+    lat = details.get('latitude')
+    lng = details.get('longitude')
+    if lat is None or lng is None:
+        pos = details.get('position') or {}
+        lat = pos.get('latitude') or pos.get('lat')
+        lng = pos.get('longitude') or pos.get('lng') or pos.get('lon')
+    if lat is None or lng is None:
+        pos = details.get('lastPosition') or {}
+        lat = pos.get('latitude') or pos.get('lat')
+        lng = pos.get('longitude') or pos.get('lng') or pos.get('lon')
+    try:
+        lat = float(lat); lng = float(lng)
+    except (TypeError, ValueError):
+        return None
+    if lat == 0 and lng == 0:
+        return None
+    return {
+        'lat': lat,
+        'lng': lng,
+        'course': details.get('courseOverGround') or details.get('course'),
+        'speed': details.get('speedOverGround') or details.get('speed'),
+        'source': details.get('positionSource') or 'AIS',
+        'last_seen': details.get('lastSeen') or details.get('lastSeenInIso') or details.get('positionTimestamp'),
+        'destination': ((details.get('destinationPort') or {}).get('name')
+                        if isinstance(details.get('destinationPort'), dict)
+                        else (details.get('destination') or details.get('destinationPortName') or details.get('destinationText'))),
+        'raw': details,
+    }
+
+
+def _refresh_ais_for_vessel_id(vid, token=None):
+    row = query('SELECT id, name, imo, vt_vessel_id FROM vessels WHERE id=? AND active=1', (vid,), one=True)
+    if not row:
+        return {'ok': False, 'error': 'vessel not found'}
+    token = token or _vt_login_token()
+    if not token:
+        return {'ok': False, 'error': 'vesseltracker credential/login unavailable'}
+    vt_id = row['vt_vessel_id']
+    if not vt_id:
+        vt_id = _vt_find_first_vessel(token, row['name'], row['imo'])
+        if vt_id:
+            execute('UPDATE vessels SET vt_vessel_id=?, updated_at=datetime("now","localtime") WHERE id=?',
+                    (vt_id, vid))
+    if not vt_id:
+        return {'ok': False, 'error': 'vesseltracker vessel id not found'}
+    details = _vt_api(f'/vessels/{int(vt_id)}/details', token)
+    pos = _vt_extract_position(details)
+    if not pos:
+        return {'ok': False, 'error': 'position not available', 'vt_vessel_id': vt_id}
+    execute('''
+        INSERT INTO vessel_positions
+            (vessel_id, vt_vessel_id, lat, lng, course, speed, source, last_seen, destination, raw_json, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+        ON CONFLICT(vessel_id) DO UPDATE SET
+            vt_vessel_id=excluded.vt_vessel_id,
+            lat=excluded.lat, lng=excluded.lng,
+            course=excluded.course, speed=excluded.speed,
+            source=excluded.source, last_seen=excluded.last_seen,
+            destination=excluded.destination, raw_json=excluded.raw_json,
+            updated_at=datetime('now','localtime')
+    ''', (vid, vt_id, pos['lat'], pos['lng'], pos.get('course'), pos.get('speed'),
+          pos.get('source'), pos.get('last_seen'), pos.get('destination'),
+          json.dumps(pos.get('raw') or {}, ensure_ascii=False)[:20000]))
+    return {'ok': True, 'vessel_id': vid, 'vt_vessel_id': vt_id,
+            'lat': pos['lat'], 'lng': pos['lng']}
+
+
+def refresh_all_ais_positions():
+    token = _vt_login_token()
+    if not token:
+        print('[ais] vesseltracker credential/login unavailable')
+        return 1
+    rows = query('SELECT id, name FROM vessels WHERE active=1 ORDER BY name')
+    ok = fail = 0
+    for r in rows:
+        try:
+            res = _refresh_ais_for_vessel_id(r['id'], token=token)
+            if res.get('ok'):
+                ok += 1
+                print(f"[ais] OK {r['name']} {res.get('lat')},{res.get('lng')}")
+            else:
+                fail += 1
+                print(f"[ais] SKIP {r['name']}: {res.get('error')}")
+        except Exception as e:
+            fail += 1
+            print(f"[ais] FAIL {r['name']}: {e}")
+        time.sleep(0.4)
+    print(f'[ais] done ok={ok} fail={fail}')
+    return 0 if ok or not rows else 2
+
+
+def _fleet_from_registered_vessels():
+    rows = query('''
+        SELECT v.id, v.name, v.short_name, v.vessel_type, v.class_society,
+               vp.lat, vp.lng, vp.course, vp.speed, vp.source, vp.last_seen, vp.destination,
+               vp.updated_at AS position_updated_at,
+               GROUP_CONCAT(s.name, ', ') AS supervisor_names
+          FROM vessels v
+          JOIN supervisor_vessels sv ON sv.vessel_id = v.id
+          JOIN supervisors s ON s.id = sv.supervisor_id AND s.active=1
+          LEFT JOIN vessel_positions vp ON vp.vessel_id = v.id
+         WHERE v.active=1
+         GROUP BY v.id
+         ORDER BY v.name
+    ''')
+    out = []
+    for r in rows:
+        if r['lat'] is None or r['lng'] is None:
+            continue
+        sup = (r['supervisor_names'] or '').split(', ')[0] if r['supervisor_names'] else None
+        out.append({
+            'name': r['name'], 'short_name': r['short_name'], 'type': r['vessel_type'],
+            'cls': r['class_society'], 'lat': float(r['lat']), 'lng': float(r['lng']),
+            'course': r['course'], 'speed': r['speed'], 'supervisor': sup,
+            'supervisors': r['supervisor_names'], 'color': 'gray',
+            'issues_open': 0, 'coc': 0, 'urgent': 0, 'vetting_open': 0,
+            'cargo_op_applicable': (r['vessel_type'] or '').upper() in ('VLCC', 'LR', 'LR1', 'LR2', 'AFRAMAX', 'MR'),
+            'position_source': r['source'] or 'AIS', 'position_ts': r['last_seen'],
+            'pos_source': 'vesseltracker', 'pos_reported_at': r['last_seen'],
+            'status': 'AIS', 'next_port': {'name': r['destination']} if r['destination'] else None,
+            'no_noon': True, 'position_updated_at': r['position_updated_at'],
+        })
+    sups = [r['name'] for r in query('SELECT name FROM supervisors WHERE active=1 ORDER BY display_order,id')]
+    last = query('SELECT MAX(updated_at) AS t FROM vessel_positions', one=True)
+    return {
+        'fleet': out,
+        'supervisors': sups,
+        'generated_at': last['t'] if last else None,
+        'trmt_generated_at': last['t'] if last else None,
+        'empty': not bool(out),
+    }
 
 
 @app.route('/api/ext/fleet-map/push', methods=['POST'])
@@ -11323,8 +11591,7 @@ def api_fleet_map_data():
         with open(FLEET_MAP_FILE, encoding='utf-8') as f:
             data = json.load(f)
     except (FileNotFoundError, ValueError):
-        return jsonify({'fleet': [], 'supervisors': [], 'generated_at': None,
-                        'empty': True})
+        data = _fleet_from_registered_vessels()
     fleet = data.get('fleet') or []
     # 선위 override(이메일 등 외부 소스) 병합 — 특정 선박만 임시로 다른 소스 위치 사용.
     try:
@@ -11406,22 +11673,8 @@ def api_fleet_map_data():
         v['ais_stale'] = bool(
             ep and 'AIS' in src and not v['email_watch']
             and (_now_epoch - float(ep)) > AIS_STALE_HOURS * 3600)
-    is_admin = (session.get('role') == 'admin')
-    sup_id = session.get('supervisor_id')
-    if sup_id and not is_admin:
-        srow = query("SELECT name FROM supervisors WHERE id=?", (sup_id,), one=True)
-        sup_name = srow['name'] if srow else None
-        allowed = {(_vkey(r['name'])) for r in
-                   query("SELECT v.name FROM supervisor_vessels sv "
-                         "JOIN vessels v ON v.id=sv.vessel_id WHERE sv.supervisor_id=?", (sup_id,))}
-        # 담당선박(supervisor_vessels, TRMT DB 권위) 매칭. 매핑이 비었을 때만 supervisor명 폴백.
-        if allowed:
-            fleet = [v for v in fleet if _vkey(v.get('name')) in allowed]
-        elif sup_name:
-            fleet = [v for v in fleet if v.get('supervisor') == sup_name]
-        else:
-            fleet = []
-        data = {**data, 'fleet': fleet, 'scoped_to': sup_name}
+    # 여러 감독이 동시에 보는 배포용 사이트: API는 전체 fleet을 내려주고 프론트 필터가 전체/감독별 전환.
+    data = {**data, 'fleet': fleet, 'scoped_to': None}
     # ── 데이터 신선도 ALERT (사이트 내 표시) ─────────────────────────────
     # KST = UTC+9 (서버 TZ 무관하게 utcnow 기준). 6h 스케줄 → 파이프라인/선박별 누락 산출.
     now_k = datetime.utcnow() + timedelta(hours=9)
@@ -12216,6 +12469,29 @@ def _auto_migrate():
         except Exception as e:
             print(f'[auto_migrate] vessels.manager 점검 건너뜀: {e}')
 
+        # vessel_positions: 등록 선박별 vesseltracker AIS 최신 선위 캐시(6시간 주기 갱신)
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS vessel_positions (
+                    vessel_id     INTEGER PRIMARY KEY,
+                    vt_vessel_id  INTEGER,
+                    lat           REAL NOT NULL,
+                    lng           REAL NOT NULL,
+                    course        REAL,
+                    speed         REAL,
+                    source        TEXT,
+                    last_seen     TEXT,
+                    destination   TEXT,
+                    raw_json      TEXT,
+                    updated_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                    FOREIGN KEY (vessel_id) REFERENCES vessels(id) ON DELETE CASCADE
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_vessel_positions_updated ON vessel_positions(updated_at)")
+            print('[auto_migrate] vessel_positions 준비 완료')
+        except Exception as e:
+            print(f'[auto_migrate] vessel_positions 점검 건너뜀: {e}')
+
         # mail_card.pending (보류 플래그)
         try:
             cols = [r[1] for r in conn.execute('PRAGMA table_info(mail_card)').fetchall()]
@@ -12281,6 +12557,13 @@ if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '--init-db':
         init_db(drop=True)
         sys.exit(0)
+    if len(sys.argv) > 1 and sys.argv[1] == '--refresh-ais':
+        if not os.path.exists(DATABASE):
+            init_db(drop=False)
+        else:
+            _auto_migrate()
+        with app.app_context():
+            sys.exit(refresh_all_ais_positions())
 
     if not os.path.exists(DATABASE):
         print('[INFO] DB 파일이 없어 자동 초기화합니다.')

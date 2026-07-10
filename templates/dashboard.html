@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}대시보드 · TRMT3{% endblock %}
+{% block title %}대시보드 · TRMT1{% endblock %}
 
 {% block head %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
@@ -401,11 +401,10 @@
     });
     const bar=document.getElementById('fmSup');
     const sups=d.supervisors||[];
-    // 감독 1명뿐이면 그 감독이 기본(전체 버튼 불필요), 아니면 로그인 감독/전체
-    const defKey=(sups.length===1)?sups[0]:((MYSUP && sups.indexOf(MYSUP)>=0)?MYSUP:'__all');
-    if(defKey!=='__all') curSup=defKey;
+    // Fleet Map은 항상 전체가 기본. 감독 버튼은 필요 시 세부 필터로만 사용.
+    const defKey='__all';
     const mk=(label,key,cnt)=>{const b=document.createElement('button');b.innerHTML=esc(label)+'<span class="n">'+cnt+'</span>';if(key===defKey)b.classList.add('on');b.onclick=()=>filt(key,b);bar.appendChild(b);return b;};
-    if(sups.length>1) mk('전체','__all',FLEET.length);   // 감독 단일이면 전체 버튼 생략(손유석 전용)
+    mk('전체','__all',FLEET.length);
     sups.forEach(s=>mk(s,s,FLEET.filter(v=>v.supervisor===s).length));
     applyFilters(); renderAlert();
     // 선명 검색: 입력하면 일치 선박만 표시, 단일 일치면 그쪽으로 이동(줌 유지)

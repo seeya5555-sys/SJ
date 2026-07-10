@@ -1,6 +1,6 @@
-# TRMT3 — Ship Management System
+# TRMT1 — Ship Management System
 
-Tanker Management Team 3 (Sinokor Shipmanagement) 내부 업무관리 시스템.
+Tanker Management Team 1 (Sinokor Shipmanagement) 내부 업무관리 시스템.
 
 현재 제공 모듈:
 - **Daily 업무관리** — 감독별 탭으로 이슈 등록/추적 (제목·상세·조치·우선순위·상태·마감일·첨부)
@@ -57,7 +57,7 @@ DB 완전 재초기화가 필요한 경우:
 python app.py --init-db
 ```
 
-## Oracle Cloud 배포 (기존 TRMT3 패턴)
+## Oracle Cloud 배포 (기존 TRMT1 패턴)
 
 ```bash
 # 1) 로컬에서 zip
