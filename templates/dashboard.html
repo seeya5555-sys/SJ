@@ -11,6 +11,8 @@
   .fm-legend{display:flex;gap:12px;font-size:11.5px;color:var(--text-secondary)}
   .fm-legend i{display:inline-block;width:9px;height:9px;border-radius:999px;margin-right:4px;vertical-align:middle}
   .fm-spacer{flex:1}.fm-updated{font-size:11px;color:var(--text-tertiary)}
+  .fm-manual-btn{font-size:11.5px;font-weight:600;color:var(--blue);background:var(--blue-bg);border:1px solid var(--border-subtle);border-radius:999px;padding:5px 12px;text-decoration:none;white-space:nowrap;transition:box-shadow .1s}
+  .fm-manual-btn:hover{box-shadow:0 3px 10px rgba(0,0,0,.1)}
   /* KPI 스트립 — 구 대시보드 카드를 컴팩트 칩으로 압축, 맵 위 한 줄. 클릭=해당 탭 이동. */
   /* nowrap + 가로스크롤 → 항상 한 줄(좁은 화면은 스크롤), fm-stage 높이 보정이 흐트러지지 않음. */
   .fm-kpi{display:flex;gap:8px;flex-wrap:nowrap;overflow-x:auto;align-items:stretch;margin-bottom:8px;padding-bottom:2px}
@@ -60,6 +62,7 @@
   .fm-windbtn a.on{background:var(--blue);filter:none}
   .leaflet-velocity-control{background:rgba(251,248,242,.88);color:var(--text-secondary);font-size:11px;border-radius:6px}
   .ship{position:relative;display:flex;align-items:center;justify-content:center;width:27px;height:27px;border-radius:50%;font-size:14px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+  .sh-hd{display:inline-block;color:#fff;font-size:12px;line-height:1;transition:transform .4s ease}
   .sire-flag{position:absolute;top:-4px;right:-4px;width:11px;height:11px;border-radius:50%;background:#eab308;border:1.5px solid #fff;animation:fmPulseY 1.3s infinite}
   @keyframes fmPulseY{0%{box-shadow:0 0 0 0 rgba(234,179,8,.85)}70%{box-shadow:0 0 0 9px rgba(234,179,8,0)}100%{box-shadow:0 0 0 0 rgba(234,179,8,0)}}
   .ship.red{background:var(--red,#c0392b)}.ship.amber{background:#b7791f}.ship.green{background:#3f7a4f}.ship.gray{background:#8a8175}
@@ -176,6 +179,7 @@
       <span title="Class/Flag 만기 임박·초과 선박은 마커가 펄스로 깜빡임">💢 펄스=Class/Flag 만기</span>
     </div>
     <div class="fm-spacer"></div>
+    <a class="fm-manual-btn" href="{{ url_for('static', filename='manual/turny-site-manual.pdf') }}" target="_blank" rel="noopener" title="사이트 사용자 매뉴얼을 새 탭 미리보기로 엽니다">📖 사이트 매뉴얼 보기</a>
     <a class="fm-updated" href="{{ url_for('dashboard_classic') }}" style="text-decoration:none">카드형 전체 →</a>
     <span class="fm-updated" id="fmUpdated">로딩…</span>
   </div>
@@ -385,7 +389,10 @@
     const pos=v.email_watch
       ? '<span title="이메일 선위 모드(AIS off 대응)" style="position:absolute;top:-7px;left:-7px;font-size:12px;line-height:1">📡</span>'
       : (v.ais_stale?'<span title="AIS 신호 끊김 — 이메일 선위 후보" style="position:absolute;top:-5px;left:-5px;width:10px;height:10px;border-radius:50%;background:#e0a800;border:1.5px solid #fff;box-shadow:0 0 0 1px #b7791f"></span>':'');
-    return L.divIcon({className:'',iconSize:[27,27],iconAnchor:[13,13],html:'<div class="ship '+(v.color||'gray')+due+'" style="position:relative">🚢'+sire+pos+'</div>'});
+    const _c0=(v.course==null)?null:Number(String(v.course).trim());
+    const hd=(_c0!=null && Number.isFinite(_c0))?(((_c0%360)+360)%360):null;
+    const body=(hd!=null)?'<span class="sh-hd" style="transform:rotate('+hd+'deg)" title="침로 '+hd+'°">▲</span>':'🚢';
+    return L.divIcon({className:'',iconSize:[27,27],iconAnchor:[13,13],html:'<div class="ship '+(v.color||'gray')+due+'" style="position:relative">'+body+sire+pos+'</div>'});
   }
 
   fetch('{{ url_for("api_fleet_map_data") }}').then(r=>r.json()).then(d=>{

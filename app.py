@@ -94,6 +94,9 @@ def get_db():
         g.db = sqlite3.connect(app.config['DATABASE'])
         g.db.row_factory = sqlite3.Row
         g.db.execute('PRAGMA foreign_keys = ON')
+        g.db.execute('PRAGMA journal_mode = WAL')
+        g.db.execute('PRAGMA busy_timeout = 5000')
+        g.db.execute('PRAGMA synchronous = NORMAL')
     return g.db
 
 @app.teardown_appcontext
@@ -11681,6 +11684,28 @@ def api_fleet_map_data():
     }
     for v in fleet:
         v['sire_obs_overdue'] = _vkey(v.get('name')) in overdue_vkeys
+
+    # Class/Flag 만기 상태(아이콘 펄스): 담당선박 class_status_items due_date 기준
+    _kst = datetime.utcnow() + timedelta(hours=9)
+    _today = _kst.strftime('%Y-%m-%d')
+    _horizon = (_kst + timedelta(days=30)).strftime('%Y-%m-%d')
+    _pfloor = (_kst - timedelta(days=180)).strftime('%Y-%m-%d')  # 너무 오래된 overdue는 노이즈라 제외
+    cls_state = {}
+    for r in query(
+            "SELECT v.name AS vname, "
+            "MAX(CASE WHEN i.due_date < ? AND i.due_date >= ? THEN 1 ELSE 0 END) AS over_f, "
+            "MAX(CASE WHEN i.due_date >= ? AND i.due_date <= ? THEN 1 ELSE 0 END) AS soon_f "
+            "FROM class_status_items i JOIN class_status cs ON cs.id=i.cs_id "
+            "JOIN vessels v ON v.id=cs.vessel_id "
+            "WHERE i.due_date IS NOT NULL AND i.due_date != '' "
+            "GROUP BY v.name",
+            (_today, _pfloor, _today, _horizon)):
+        if r['over_f']:
+            cls_state[_vkey(r['vname'])] = 'overdue'
+        elif r['soon_f']:
+            cls_state[_vkey(r['vname'])] = 'soon'
+    for v in fleet:
+        v['cls_due_state'] = cls_state.get(_vkey(v.get('name')))
     # 이메일 선위 watch 상태 + AIS 끊김 자동표시(이메일모드 후보)
     _watch = _load_email_watch()
     _now_epoch = (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()
