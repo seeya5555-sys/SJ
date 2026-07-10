@@ -331,7 +331,7 @@
       const items=vs.map(v=> v.since
         ? (esc(v.name)+' <small>'+esc(v.since)+'부터 '+v.days+'일</small>')
         : (esc(v.name)+' <small>보고 없음</small>')).join(' · ');
-      html+='<div class="fm-al-row warn">📡 <b>noon 보고 누락 '+vs.length+'척</b> — '+items+'</div>';
+      html+='<div class="fm-al-row warn">📡 <b>DNR 미제출 '+vs.length+'척</b> — '+items+'</div>';
     }
     if(html){ box.innerHTML=html+'<button class="fm-al-x" title="닫기" onclick="this.parentNode.hidden=true">×</button>'; box.hidden=false; }
     else { box.hidden=true; }
@@ -394,7 +394,9 @@
     document.getElementById('fmUpdated').textContent= d.empty ? '데이터 없음 — 맥 스케줄러 첫 동기화 대기'
       : ('⟳ 온디맨드+맥 스케줄러 · 선위 '+(d.generated_at||'')+' · TRMT '+String(d.trmt_generated_at||'').slice(0,16));
     if(!FLEET.length){renderAlert();document.querySelector('.fm-stage').insertAdjacentHTML('beforeend','<div class="fm-empty">표시할 선박이 없습니다.</div>');return;}
+    function hasPos(v){return Number.isFinite(Number(v.lat))&&Number.isFinite(Number(v.lng));}
     FLEET.forEach(v=>{
+      if(!hasPos(v)) return;
       const m=L.marker([v.lat,v.lng],{icon:icon(v)}).addTo(map);
       const tt=L.tooltip({permanent:true,direction:'top',offset:[0,-14],className:'ship-label'}).setContent(v.name).setLatLng([v.lat,v.lng]);tt.addTo(map);
       m.on('click',()=>openV(v));markers.push({v,m,tt});
@@ -441,6 +443,11 @@
       const ts=v.position_ts?' ('+esc(String(v.position_ts).slice(0,16).replace("T"," "))+')':'';
       return '<span style="color:#2f6f9f">🛰 위치=AIS</span>'+ts+(v.ais_stale?' <span style="color:#b7791f">⚠ 신호 끊김</span>':'');
     }
+    if(String(v.position_source||'').indexOf('SVMS')>=0){
+      const ts=v.rpt_dt?' ('+esc(String(v.rpt_dt).slice(4,6)+'/'+String(v.rpt_dt).slice(6,8))+')':'';
+      return '<span style="color:#166534">위치=SVMS noon</span>'+ts;
+    }
+    if(v.missing_position) return '<span style="color:#b7791f">위치 없음 · DNR/SVMS 미제출 확인 필요</span>';
     return '(SVMS noon)';
   }
   // AIS off 대응 토글: 켜면 그 배가 이메일 선위 watch 등록 → 워처가 Outlook 메일에서 선위 갱신
@@ -470,7 +477,8 @@
   }
   function openV(v){
     document.getElementById('fmName').textContent=v.name;
-    document.getElementById('fmSubt').textContent=esc(v.cls||v.type||'')+' · 감독 '+esc(v.supervisor||'-')+' · '+v.lat.toFixed(1)+'°, '+v.lng.toFixed(1)+'°';
+    const coord=(Number.isFinite(Number(v.lat))&&Number.isFinite(Number(v.lng))) ? (Number(v.lat).toFixed(1)+'°, '+Number(v.lng).toFixed(1)+'°') : '좌표 없음';
+    document.getElementById('fmSubt').textContent=esc(v.cls||v.type||'')+' · 감독 '+esc(v.supervisor||'-')+' · '+coord;
     const bl=v.bl==='L'?'lade':(v.bl==='B'?'ball':'gray');
     const blTxt=v.bl==='L'?'🛢 Laden':(v.bl==='B'?'💧 Ballast':'B/L —');
     document.getElementById('fmBadges').innerHTML='<span class="pill '+bl+'">'+blTxt+'</span>'+
@@ -516,6 +524,7 @@
     const ptt=L.tooltip({permanent:true,direction:'bottom',offset:[0,4],className:'port-label'}).setContent(esc(label)).setLatLng(xy);ptt.addTo(map);portMarkers.push(pm,ptt);}
   function clearRoute(){[routeLayer,trackLayer].forEach(l=>l&&map.removeLayer(l));routeLayer=trackLayer=null;portMarkers.forEach(p=>map.removeLayer(p));portMarkers=[];if(window._fmA)clearInterval(window._fmA);}
   function drawRoute(v){
+    if(!(Number.isFinite(Number(v.lat))&&Number.isFinite(Number(v.lng)))) return;
     clearRoute();const all=[[v.lat,v.lng]];
     // 회색 noon 항적(breadcrumb)은 표시 안 함 — noon 위치 튐으로 지저분. In→Next searoute만.
     if(v.prev_port&&v.prev_port.xy){portDot(v.prev_port.xy,(v.prev_port.name||'In Port')+' · 출항');all.push(v.prev_port.xy);}

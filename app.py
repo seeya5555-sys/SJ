@@ -11380,8 +11380,9 @@ def refresh_all_ais_positions():
 def _fleet_from_registered_vessels():
     rows = query('''
         SELECT v.id, v.name, v.short_name, v.vessel_type, v.class_society,
+               v.vsl_cd,
                vp.lat, vp.lng, vp.course, vp.speed, vp.source, vp.last_seen, vp.destination,
-               vp.updated_at AS position_updated_at,
+               vp.raw_json, vp.updated_at AS position_updated_at,
                GROUP_CONCAT(s.name, ', ') AS supervisor_names
           FROM vessels v
           JOIN supervisor_vessels sv ON sv.vessel_id = v.id
@@ -11393,20 +11394,37 @@ def _fleet_from_registered_vessels():
     ''')
     out = []
     for r in rows:
-        if r['lat'] is None or r['lng'] is None:
-            continue
+        raw = {}
+        try:
+            raw = json.loads(r['raw_json'] or '{}')
+        except (TypeError, ValueError):
+            raw = {}
         sup = (r['supervisor_names'] or '').split(', ')[0] if r['supervisor_names'] else None
+        lat = float(r['lat']) if r['lat'] is not None else None
+        lng = float(r['lng']) if r['lng'] is not None else None
+        pos_source = r['source'] or raw.get('source') or None
+        has_svms_code = bool((r['vsl_cd'] or '').strip())
+        no_noon = not (has_svms_code or raw.get('rpt_dt'))
         out.append({
             'name': r['name'], 'short_name': r['short_name'], 'type': r['vessel_type'],
-            'cls': r['class_society'], 'lat': float(r['lat']), 'lng': float(r['lng']),
-            'course': r['course'], 'speed': r['speed'], 'supervisor': sup,
+            'cls': r['class_society'], 'lat': lat, 'lng': lng,
+            'course': raw.get('course') if raw.get('course') is not None else r['course'],
+            'speed': raw.get('speed') if raw.get('speed') is not None else r['speed'],
+            'supervisor': sup,
             'supervisors': r['supervisor_names'], 'color': 'gray',
             'issues_open': 0, 'coc': 0, 'urgent': 0, 'vetting_open': 0,
             'cargo_op_applicable': (r['vessel_type'] or '').upper() in ('VLCC', 'LR', 'LR1', 'LR2', 'AFRAMAX', 'MR'),
-            'position_source': r['source'] or 'AIS', 'position_ts': r['last_seen'],
-            'pos_source': 'vesseltracker', 'pos_reported_at': r['last_seen'],
-            'status': 'AIS', 'next_port': {'name': r['destination']} if r['destination'] else None,
-            'no_noon': True, 'position_updated_at': r['position_updated_at'],
+            'position_source': pos_source or ('SVMS noon' if raw.get('rpt_dt') else None),
+            'position_ts': r['last_seen'] or raw.get('rpt_di') or raw.get('rpt_dt'),
+            'pos_source': 'svms' if 'SVMS' in str(pos_source or raw.get('source') or '') else ('vesseltracker' if pos_source else None),
+            'pos_reported_at': r['last_seen'] or raw.get('rpt_di') or raw.get('rpt_dt'),
+            'status': raw.get('status') or ('AIS' if pos_source else None),
+            'bl': raw.get('bl'),
+            'rpt_dt': raw.get('rpt_dt'),
+            'eta': raw.get('eta'),
+            'next_port': {'name': r['destination'] or raw.get('dest_port')} if (r['destination'] or raw.get('dest_port')) else None,
+            'no_noon': no_noon, 'position_updated_at': r['position_updated_at'],
+            'missing_position': lat is None or lng is None,
         })
     sups = [r['name'] for r in query('SELECT name FROM supervisors WHERE active=1 ORDER BY display_order,id')]
     last = query('SELECT MAX(updated_at) AS t FROM vessel_positions', one=True)
