@@ -1,0 +1,9 @@
+instance/
+__pycache__/
+*.pyc
+.venv/
+.serena/
+.DS_Store
+
+# KR-Con auth cookies
+.krcon_session/

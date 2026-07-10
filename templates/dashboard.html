@@ -1,0 +1,571 @@
+{% extends "base.html" %}
+{% block title %}대시보드 · TRMT3{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.4/dist/leaflet-velocity.min.css"/>
+<style>
+  .fm-wrap{margin:-8px -4px 0}
+  .fm-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+  .fm-bar h1{font-size:17px;margin:0;font-weight:700}
+  .fm-legend{display:flex;gap:12px;font-size:11.5px;color:var(--text-secondary)}
+  .fm-legend i{display:inline-block;width:9px;height:9px;border-radius:999px;margin-right:4px;vertical-align:middle}
+  .fm-spacer{flex:1}.fm-updated{font-size:11px;color:var(--text-tertiary)}
+  /* KPI 스트립 — 구 대시보드 카드를 컴팩트 칩으로 압축, 맵 위 한 줄. 클릭=해당 탭 이동. */
+  /* nowrap + 가로스크롤 → 항상 한 줄(좁은 화면은 스크롤), fm-stage 높이 보정이 흐트러지지 않음. */
+  .fm-kpi{display:flex;gap:8px;flex-wrap:nowrap;overflow-x:auto;align-items:stretch;margin-bottom:8px;padding-bottom:2px}
+  .fm-kpi a{flex:0 0 auto}
+  .fm-kpi a{display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--border-subtle);border-radius:11px;padding:7px 14px;text-decoration:none;color:inherit;transition:box-shadow .1s,transform .1s}
+  .fm-kpi a:hover{box-shadow:0 4px 12px rgba(0,0,0,.09);transform:translateY(-1px);border-color:var(--border)}
+  .fm-kpi .ico{font-size:15px;line-height:1}
+  .fm-kpi .meta{display:flex;flex-direction:column;gap:1px}
+  .fm-kpi .lbl{font-size:11px;color:var(--text-secondary);font-weight:600;white-space:nowrap}
+  .fm-kpi .num{font-size:19px;font-weight:700;line-height:1;color:var(--text-primary)}
+  .fm-kpi .num small{font-size:10.5px;color:var(--text-tertiary);font-weight:600;margin-left:2px}
+  .fm-kpi a.hot .num{color:var(--red,#c0392b)}
+  .fm-kpi a.warn .num{color:#b7791f}
+  .fm-kpi a.zero .num{color:var(--text-tertiary)}
+  .fm-kpi .flags{display:flex;gap:4px;margin-left:2px}
+  .fm-kpi .fl{font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px}
+  .fm-kpi .fl.red{background:var(--red-bg,#fbe4e1);color:var(--red,#c0392b)}
+  .fm-kpi .fl.amber{background:#fff3e0;color:#b7791f}
+  .fm-kpi .fl.blue{background:var(--blue-bg);color:var(--blue)}
+  .fm-kpi .scope{align-self:center;font-size:11px;color:var(--text-tertiary);margin-left:auto}
+  .fm-kpi .today-sched{align-self:center;max-width:200px;font-size:11px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-left:1px solid var(--border-subtle);padding-left:9px}
+  .fm-kpi a#todaySchedChip .caret{font-size:9px;color:var(--text-tertiary);margin-left:1px}
+  /* 오늘 일정 팝오버 — KPI 스트립이 overflow-x:auto라 칩 안에 두면 잘림 → position:fixed로 띄워 클리핑 회피. 당일 일정 전체를 잘림 없이 표시 */
+  #todaySchedPop{position:fixed;z-index:1200;display:none;min-width:248px;max-width:360px;max-height:60vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.16);padding:6px 0}
+  #todaySchedPop.open{display:block}
+  #todaySchedPop .tsp-hd{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:5px 14px 9px;margin-bottom:4px;font-size:12px;font-weight:700;color:var(--text-secondary);border-bottom:1px solid var(--border-subtle)}
+  #todaySchedPop .tsp-hd a{font-size:11px;font-weight:600;color:var(--blue);text-decoration:none;white-space:nowrap}
+  #todaySchedPop .tsp-hd a:hover{text-decoration:underline}
+  #todaySchedPop .tsp-row{display:flex;gap:10px;padding:6px 14px;align-items:baseline;font-size:12.5px}
+  #todaySchedPop .tsp-row:hover{background:var(--blue-bg)}
+  #todaySchedPop .tsp-t{min-width:44px;font-weight:700;color:var(--blue);font-variant-numeric:tabular-nums}
+  #todaySchedPop .tsp-t.allday{color:var(--text-tertiary);font-weight:600}
+  #todaySchedPop .tsp-title{flex:1;color:var(--text-primary);line-height:1.4}
+  #todaySchedPop .tsp-cat{font-size:10.5px;color:var(--text-tertiary)}
+  .fm-sup{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px}
+  .fm-sup .lbl{font-size:11.5px;font-weight:700;color:var(--text-secondary)}
+  .fm-search{border:1px solid var(--border);background:var(--surface);color:var(--text-primary);font-size:12.5px;padding:6px 12px;border-radius:999px;width:200px;outline:none}
+  .fm-search:focus{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-bg)}
+  .fm-sup button{border:1px solid var(--border);background:var(--surface);color:var(--text-secondary);font-size:12px;font-weight:600;padding:5px 12px;border-radius:999px;cursor:pointer}
+  .fm-sup button.on{background:var(--blue);border-color:var(--blue);color:#fff}
+  .fm-sup button .n{opacity:.7;font-weight:700;margin-left:3px}
+  /* z-index:0 → Leaflet 내부 z-index(패널 200~700·컨트롤 1000)를 stage 안에 가둠.
+     안 그러면 root로 새어나와 topnav 드롭다운(자동화 등) 위로 그려져 메뉴가 잘림. */
+  .fm-stage{position:relative;z-index:0;height:calc(100vh - 252px);min-height:460px;border:1px solid var(--border-subtle);border-radius:14px;overflow:hidden}
+  #fmmap{position:absolute;inset:0}.leaflet-container{background:#cfe0e6;font:inherit}
+  .fm-windbtn a{font-size:15px;line-height:30px;width:30px;height:30px;text-align:center;text-decoration:none}
+  .fm-windbtn a.on{background:var(--blue);filter:none}
+  .leaflet-velocity-control{background:rgba(251,248,242,.88);color:var(--text-secondary);font-size:11px;border-radius:6px}
+  .ship{position:relative;display:flex;align-items:center;justify-content:center;width:27px;height:27px;border-radius:50%;font-size:14px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+  .sire-flag{position:absolute;top:-4px;right:-4px;width:11px;height:11px;border-radius:50%;background:#eab308;border:1.5px solid #fff;animation:fmPulseY 1.3s infinite}
+  @keyframes fmPulseY{0%{box-shadow:0 0 0 0 rgba(234,179,8,.85)}70%{box-shadow:0 0 0 9px rgba(234,179,8,0)}100%{box-shadow:0 0 0 0 rgba(234,179,8,0)}}
+  .ship.red{background:var(--red,#c0392b)}.ship.amber{background:#b7791f}.ship.green{background:#3f7a4f}.ship.gray{background:#8a8175}
+  /* Class/Flag 만기 임박(soon)·초과(overdue) 펄스 링 */
+  .ship.due-overdue{border-color:#c0392b;animation:fmPulseR 1.1s infinite}
+  .ship.due-soon{border-color:#e08a1e;animation:fmPulseA 1.6s infinite}
+  @keyframes fmPulseR{0%{box-shadow:0 0 0 0 rgba(192,57,43,.75)}70%{box-shadow:0 0 0 11px rgba(192,57,43,0)}100%{box-shadow:0 0 0 0 rgba(192,57,43,0)}}
+  @keyframes fmPulseA{0%{box-shadow:0 0 0 0 rgba(224,138,30,.7)}70%{box-shadow:0 0 0 10px rgba(224,138,30,0)}100%{box-shadow:0 0 0 0 rgba(224,138,30,0)}}
+  .ship-label{font-size:10px;font-weight:700;color:var(--text-primary);background:rgba(251,248,242,.85);padding:1px 5px;border-radius:5px;white-space:nowrap;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+  .port{width:9px;height:9px;border-radius:50%;background:var(--surface);border:2px solid var(--text-secondary)}
+  .port-label{font-size:10px;color:var(--text-secondary);background:rgba(251,248,242,.8);padding:0 4px;border-radius:4px;white-space:nowrap}
+  .fm-panel{position:absolute;top:0;right:0;width:360px;max-width:92%;height:100%;background:var(--surface);border-left:1px solid var(--border);box-shadow:-6px 0 24px rgba(0,0,0,.08);transform:translateX(100%);transition:transform .22s;z-index:1000;display:flex;flex-direction:column}
+  .fm-panel.open{transform:translateX(0)}
+  .fm-ph{padding:15px 18px;border-bottom:1px solid var(--border-subtle)}
+  .fm-ph .row{display:flex;align-items:center;gap:8px}.fm-ph h2{margin:0;font-size:18px;font-weight:700}
+  .fm-ph .sub{font-size:12px;color:var(--text-secondary);margin-top:3px}.fm-ph .badges{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .fm-x{margin-left:auto;border:0;background:transparent;font-size:20px;color:var(--text-tertiary);cursor:pointer}
+  .fm-pb{padding:14px 18px;overflow-y:auto;display:flex;flex-direction:column;gap:13px}
+  .fm-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .fm-duewarn{display:block;text-decoration:none;padding:8px 11px;border-radius:9px;font-size:12.5px;font-weight:700}
+  .fm-duewarn.overdue{background:var(--red-bg,#fbe4e1);color:var(--red,#c0392b);border:1px solid #f0b9b2}
+  .fm-duewarn.soon{background:#fff3e0;color:#b7791f;border:1px solid #f0d2a0}
+  .fm-alert{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:1200;max-width:88%;
+    background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:0 5px 20px rgba(0,0,0,.13);
+    padding:9px 36px 9px 13px;font-size:12.5px;line-height:1.55}
+  .fm-al-row{white-space:normal}
+  .fm-al-row+.fm-al-row{margin-top:4px;padding-top:4px;border-top:1px dashed var(--border-subtle)}
+  .fm-al-row.crit{color:var(--red,#c0392b);font-weight:700}
+  .fm-al-row.warn{color:#b7791f;font-weight:600}
+  .fm-al-row small{color:var(--text-tertiary);font-weight:400}
+  .fm-al-x{position:absolute;top:5px;right:8px;border:0;background:none;font-size:18px;line-height:1;cursor:pointer;color:var(--text-tertiary)}
+  .fm-card{background:var(--surface-2);border:1px solid var(--border-subtle);border-radius:11px;padding:11px;display:block;text-decoration:none;color:inherit;transition:box-shadow .1s,transform .1s}
+  a.fm-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.10);transform:translateY(-1px);border-color:var(--border)}
+  a.fm-card .v::after{content:" ›";color:var(--text-tertiary);font-size:14px;font-weight:600}
+  .fm-card .k{font-size:11.5px;color:var(--text-secondary);font-weight:600}.fm-card .v{font-size:25px;font-weight:700;line-height:1.1;margin-top:4px}
+  .fm-card .v small{font-size:12px;color:var(--text-tertiary);font-weight:600}
+  .fm-card.red .v{color:var(--red,#c0392b)}.fm-card.amber .v{color:#b7791f}.fm-card.blue .v{color:var(--blue)}.fm-card.green .v{color:#3f7a4f}
+  .fm-sec{font-size:11.5px;font-weight:700;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.03em;margin-bottom:-4px}
+  .fm-line{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 0;border-bottom:1px dashed var(--border-subtle)}.fm-line:last-child{border-bottom:0}
+  .fm-line .lk{color:var(--text-secondary);flex:0 0 104px}.fm-line .lv{color:var(--text-primary);font-weight:600}
+  .pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+  .pill.red{background:var(--red-bg,#fbe4e1);color:var(--red,#c0392b)}.pill.amber{background:#fff3e0;color:#b7791f}
+  .pill.blue{background:var(--blue-bg);color:var(--blue)}.pill.green{background:#e4f0e6;color:#3f7a4f}
+  .pill.gray{background:var(--surface-2);color:var(--text-secondary);border:1px solid var(--border-subtle)}
+  .pill.lade{background:#3a3027;color:#f4efe6}.pill.ball{background:var(--blue-bg);color:var(--blue)}
+  .fm-note{font-size:10.5px;color:var(--text-tertiary);font-style:italic}
+  .fm-eta{font-size:11px;font-weight:600;color:var(--blue);background:var(--blue-bg);padding:2px 7px;border-radius:999px}
+  .fm-btn{display:block;text-align:center;padding:10px;border-radius:9px;background:var(--blue);color:#fff;font-weight:700;font-size:13px;text-decoration:none;margin-top:2px}
+  .fm-empty{padding:40px;text-align:center;color:var(--text-tertiary)}
+  /* ── 오늘의 조종석 스트립 ── */
+  .ckpt{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:0 -4px 14px}
+  .ckpt-card{background:var(--surface);border:1px solid var(--border-subtle);border-radius:14px;padding:13px 15px}
+  .ckpt-h{font-size:13px;font-weight:700;color:var(--text-primary);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .ckpt-hlink{margin-left:auto;font-size:11px;font-weight:600;color:var(--blue);text-decoration:none}
+  .ckpt-hlink:hover{text-decoration:underline}
+  /* DUE */
+  .ck-due{display:flex;align-items:center;gap:9px;padding:5px 0;border-top:1px solid var(--border-subtle);font-size:12.5px}
+  .ck-due:first-child{border-top:none}
+  .ck-dchip{flex:0 0 auto;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;min-width:42px;text-align:center}
+  .ck-dchip.red{background:var(--red-bg);color:var(--red);border:1px solid var(--red-border)}
+  .ck-dchip.amber{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-border)}
+  .ck-dchip.blue{background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)}
+  .ck-dtxt{flex:1;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ck-dtxt b{font-weight:700}
+  .ck-dsrc{flex:0 0 auto;font-size:10px;color:var(--text-tertiary);background:var(--surface-2);padding:2px 7px;border-radius:999px}
+  /* approvals */
+  .ck-boxes{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .ck-box{display:flex;flex-direction:column;align-items:center;gap:2px;padding:9px 4px;border-radius:10px;
+          background:var(--surface-2);border:1px solid var(--border-subtle);text-decoration:none;color:inherit}
+  .ck-box:hover{border-color:var(--border)}
+  .ck-box.hot{background:var(--amber-bg);border-color:var(--amber-border)}
+  .ck-box .bn{font-size:20px;font-weight:700;line-height:1;color:var(--text-primary)}
+  .ck-box.hot .bn{color:var(--amber)}
+  .ck-box .bl{font-size:10.5px;color:var(--text-secondary);font-weight:600}
+  .ck-oldest{margin-top:9px;font-size:11.5px;color:var(--text-secondary)}
+  .ck-oldest b{color:var(--red);font-weight:700}
+  /* automation */
+  .ck-autohd{font-size:13px;color:var(--text-secondary);margin-bottom:9px}
+  .ck-autohd b{font-size:20px;color:var(--green);font-weight:700}
+  .ck-autohd.bad b{color:var(--red)}
+  .ck-arow{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;border-top:1px solid var(--border-subtle)}
+  .ck-arow:first-child{border-top:none}
+  .ck-adot{width:9px;height:9px;border-radius:999px;flex:0 0 auto}
+  .ck-adot.warn{background:var(--amber-dot)}.ck-adot.fail{background:var(--red-strong)}
+  .ck-albl{flex:1;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ck-aago{flex:0 0 auto;font-size:10.5px;color:var(--text-tertiary)}
+  .ck-none{font-size:12px;color:var(--text-tertiary);padding:4px 0}
+</style>
+{% endblock %}
+
+{% block content %}
+{# ── 오늘의 조종석 스트립 (기존 대시보드 위 추가 블록, 데이터 없으면 각 카드 숨김) ── #}
+<div class="ckpt" id="ckpt" hidden>
+  <div class="ckpt-card" id="ckDue" hidden>
+    <div class="ckpt-h">⏰ DUE 조기경보</div>
+    <div class="ckpt-body" id="ckDueBody"></div>
+  </div>
+  <div class="ckpt-card" id="ckApp" hidden>
+    <div class="ckpt-h">✅ 내 승인 대기</div>
+    <div class="ckpt-body" id="ckAppBody"></div>
+  </div>
+  <div class="ckpt-card" id="ckAuto" hidden>
+    <div class="ckpt-h">🤖 자동화 상태 <a class="ckpt-hlink" href="{{ url_for('health_page') }}">헬스 보드 →</a></div>
+    <div class="ckpt-body" id="ckAutoBody"></div>
+  </div>
+</div>
+
+<div class="fm-wrap">
+  <div class="fm-bar">
+    <h1>🗺 Fleet Map</h1>
+    <div class="fm-legend">
+      <span><i style="background:#c0392b"></i>COC/Flag</span><span><i style="background:#b7791f"></i>Urgent</span>
+      <span><i style="background:#3f7a4f"></i>이슈없음</span><span><i style="background:#8a8175"></i>일반이슈</span>
+      <span title="Class/Flag 만기 임박·초과 선박은 마커가 펄스로 깜빡임">💢 펄스=Class/Flag 만기</span>
+    </div>
+    <div class="fm-spacer"></div>
+    <a class="fm-updated" href="{{ url_for('dashboard_classic') }}" style="text-decoration:none">카드형 전체 →</a>
+    <span class="fm-updated" id="fmUpdated">로딩…</span>
+  </div>
+
+  {# KPI 스트립 — 구 대시보드 집계(_dashboard_ctx)를 맵 위 한 줄 칩으로. 클릭=해당 탭. #}
+  <div class="fm-kpi">
+    <a class="{% if stats.issues_open %}{% if stats.issues_urgent or stats.issues_coc %}hot{% endif %}{% else %}zero{% endif %}" href="{{ url_for('index') }}">
+      <span class="ico">📋</span>
+      <span class="meta"><span class="lbl">현안 (Open)</span><span class="num">{{ stats.issues_open }}<small>건</small></span></span>
+      {% if stats.issues_urgent or stats.issues_coc or stats.issues_dd %}
+      <span class="flags">
+        {% if stats.issues_urgent %}<span class="fl red">🚨{{ stats.issues_urgent }}</span>{% endif %}
+        {% if stats.issues_coc %}<span class="fl amber">COC {{ stats.issues_coc }}</span>{% endif %}
+        {% if stats.issues_dd %}<span class="fl blue">DD {{ stats.issues_dd }}</span>{% endif %}
+      </span>{% endif %}
+    </a>
+    <a class="{% if stats.class_due %}warn{% else %}zero{% endif %}" href="{{ url_for('class_status_page') }}">
+      <span class="ico">🔍</span>
+      <span class="meta"><span class="lbl">Class 만기 (D-30)</span><span class="num">{{ stats.class_due }}<small>건</small></span></span>
+    </a>
+    <a class="{% if stats.vetting_open %}{% if stats.vetting_pri %}hot{% else %}warn{% endif %}{% else %}zero{% endif %}" href="{{ url_for('vetting_status') }}">
+      <span class="ico">🛡</span>
+      <span class="meta"><span class="lbl">Vetting Open</span><span class="num">{{ stats.vetting_open }}<small>건</small></span></span>
+      {% if stats.vetting_pri %}<span class="flags"><span class="fl red">⭐{{ stats.vetting_pri }}</span></span>{% endif %}
+    </a>
+    <a id="todaySchedChip" class="{% if not today_count %}zero{% endif %}" href="{{ url_for('calendar_page') }}"
+       onclick="return toggleTodaySched(event)"
+       {% if today_events %}aria-haspopup="true" aria-expanded="false"{% endif %}>
+      <span class="ico">📅</span>
+      <span class="meta"><span class="lbl">오늘 일정</span><span class="num">{{ today_count }}<small>건</small></span></span>
+      {% if today_events %}<span class="today-sched">{% for e in today_events[:2] %}{{ e['title'] }}{% if not loop.last %} · {% endif %}{% endfor %}{% if today_count > 2 %} +{{ today_count - 2 }}{% endif %}</span><span class="caret">▾</span>{% endif %}
+    </a>
+    <span class="scope">{% if scoped %}<b>{{ sup_name }}</b> 담당 기준{% else %}전체 선박 기준{% endif %}</span>
+  </div>
+
+  {% if today_events %}
+  <div id="todaySchedPop" aria-label="오늘 일정 상세">
+    <div class="tsp-hd"><span>📅 오늘 일정 · {{ today_count }}건</span><a href="{{ url_for('calendar_page') }}">캘린더 →</a></div>
+    {% for e in today_events %}
+    <div class="tsp-row">
+      <span class="tsp-t{% if not e['start_time'] %} allday{% endif %}">{{ e['start_time'] or '종일' }}</span>
+      <span class="tsp-title">{{ e['title'] }}{% if e['category'] %}<span class="tsp-cat"> · {{ e['category'] }}</span>{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="fm-sup" id="fmSup">
+    <input id="fmSearch" class="fm-search" type="text" placeholder="🔍 선박명 검색…" autocomplete="off"/>
+    <span class="lbl">감독 필터</span>
+  </div>
+  <div class="fm-stage">
+    <div id="fmmap"></div>
+    <div class="fm-alert" id="fmAlert" hidden></div>
+    <div class="fm-panel" id="fmPanel">
+      <div class="fm-ph"><div class="row"><div><h2 id="fmName">—</h2><div class="sub" id="fmSubt">—</div></div>
+        <button class="fm-x" onclick="fmClose()">×</button></div><div class="badges" id="fmBadges"></div></div>
+      <div class="fm-pb" id="fmBody"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* 오늘의 조종석 스트립 — /api/dashboard/cockpit 1회 로드. 데이터 없는 카드는 숨김. */
+(function(){
+  const wrap=document.getElementById('ckpt');
+  if(!wrap) return;
+  const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const TAB={fundreq:"{{ url_for('fundreq_page') }}",aor:"{{ url_for('aor_page') }}",
+             invoice:"{{ url_for('invoice_page') }}",wf1:"{{ url_for('mail_page') }}"};
+  function dchip(d){
+    let cls='blue',lbl='D-'+d;
+    if(d<0){cls='red';lbl='D+'+(-d);}
+    else if(d<=3){cls='red';}
+    else if(d<=10){cls='amber';}
+    return '<span class="ck-dchip '+cls+'">'+lbl+'</span>';
+  }
+  const SRC={class:'선급',calendar:'일정'};
+  function renderDue(due){
+    const box=document.getElementById('ckDue');
+    if(!due||!due.length){box.hidden=true;return;}
+    document.getElementById('ckDueBody').innerHTML=due.map(x=>
+      '<div class="ck-due">'+dchip(x.days_left)
+      +'<span class="ck-dtxt">'+(x.vessel?'<b>'+esc(x.vessel)+'</b> — ':'')+esc(x.title)+'</span>'
+      +'<span class="ck-dsrc">'+(SRC[x.source]||esc(x.source))+'</span></div>').join('');
+    box.hidden=false;
+  }
+  function abox(key,label,n){
+    const hot=n>0?' hot':'';
+    return '<a class="ck-box'+hot+'" href="'+TAB[key]+'"><span class="bn">'+n+'</span><span class="bl">'+label+'</span></a>';
+  }
+  function renderApp(a){
+    const box=document.getElementById('ckApp');
+    if(!a){box.hidden=true;return;}
+    const tot=(a.fundreq||0)+(a.aor||0)+(a.invoice||0)+(a.wf1||0);
+    if(!tot && !a.oldest){box.hidden=true;return;}
+    let html='<div class="ck-boxes">'+abox('fundreq','FundReq',a.fundreq||0)
+      +abox('aor','AOR',a.aor||0)+abox('invoice','Invoice',a.invoice||0)
+      +abox('wf1','WF1',a.wf1||0)+'</div>';
+    if(a.oldest&&a.oldest.days>0)
+      html+='<div class="ck-oldest">가장 오래 대기: '+esc(a.oldest.label)+' <b>'+a.oldest.days+'일</b> 경과</div>';
+    document.getElementById('ckAppBody').innerHTML=html;
+    box.hidden=false;
+  }
+  function renderAuto(au){
+    const box=document.getElementById('ckAuto');
+    if(!au||!au.total){box.hidden=true;return;}
+    const bad=(au.fail||0)>0;
+    let html='<div class="ck-autohd'+(bad?' bad':'')+'"><b>'+(au.ok||0)+'</b> / '+au.total+' 정상'
+      +((au.warn||0)?' · 지연 '+au.warn:'')+((au.fail||0)?' · 실패 '+au.fail:'')+'</div>';
+    if(au.worst&&au.worst.length){
+      html+=au.worst.map(w=>'<div class="ck-arow"><span class="ck-adot '+esc(w.status)+'"></span>'
+        +'<span class="ck-albl">'+esc(w.label)+'</span>'
+        +'<span class="ck-aago">'+(w.ago?esc(w.ago):'')+'</span></div>').join('');
+    }else{
+      html+='<div class="ck-none">문제 있는 러너 없음 ✓</div>';
+    }
+    document.getElementById('ckAutoBody').innerHTML=html;
+    box.hidden=false;
+  }
+  fetch('/api/dashboard/cockpit',{headers:{'Accept':'application/json'}})
+    .then(r=>r.ok?r.json():null)
+    .then(j=>{
+      if(!j) return;
+      renderDue(j.due);
+      renderApp(j.is_admin?j.approvals:null);
+      renderAuto(j.automation);
+      // 하나라도 보이면 래퍼 노출
+      const any=['ckDue','ckApp','ckAuto'].some(id=>!document.getElementById(id).hidden);
+      wrap.hidden=!any;
+    }).catch(()=>{});
+})();
+</script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.4/dist/leaflet-velocity.min.js"></script>
+<script>
+(function(){
+  const esc=s=>(s==null?'':String(s)).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  // 데이터 신선도 ALERT — 파이프라인 미갱신/선박별 noon 누락을 사이트 상단 배너로
+  // 신선도 알림. noon 누락은 현재 감독필터(curSup)에 맞춰 본인 담당선박만 표시.
+  function renderAlert(){
+    const box=document.getElementById('fmAlert'); const s=STALE; if(!box||!s) return;
+    let html='';
+    if(s.pipeline){
+      const p=s.pipeline, age=p.days>=1?(p.days+'일'):(p.hours+'시간');
+      html+='<div class="fm-al-row crit">⚠ <b>선위 데이터 미갱신</b> — '+esc(p.at)+' 이후 멈춤 (<b>'+age+'째</b>) · 맥 스케줄러 점검 필요</div>';
+    }
+    let vs=s.vessels||[];
+    if(curSup!=='__all') vs=vs.filter(v=>v.sup===curSup);
+    if(vs.length){
+      const items=vs.map(v=> v.since
+        ? (esc(v.name)+' <small>'+esc(v.since)+'부터 '+v.days+'일</small>')
+        : (esc(v.name)+' <small>보고 없음</small>')).join(' · ');
+      html+='<div class="fm-al-row warn">📡 <b>noon 보고 누락 '+vs.length+'척</b> — '+items+'</div>';
+    }
+    if(html){ box.innerHTML=html+'<button class="fm-al-x" title="닫기" onclick="this.parentNode.hidden=true">×</button>'; box.hidden=false; }
+    else { box.hidden=true; }
+  }
+  // minZoom=2: 전세계 한눈뷰가 최대 축소뷰(손유석 지정 줌2). maxZoom=10. 줌은 스크롤로만.
+  const map=L.map('fmmap',{zoomControl:true,worldCopyJump:true,minZoom:2,maxZoom:10,
+    maxBounds:[[-82,-230],[90,230]],maxBoundsViscosity:0.6}).setView([20,140],2);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    {attribution:'© CARTO © OSM',subdomains:'abcd',maxZoom:19}).addTo(map);
+
+  // 🌬 해상 바람 토글 — NOAA GFS 10m 바람(leaflet-velocity 움직이는 입자). 태풍/열대저기압=소용돌이.
+  // 데이터는 첫 켤 때 lazy fetch(/api/fleet-map/wind). 선박마커는 overlay 위(markerPane)라 그대로 보임.
+  let windLayer=null, windOn=false, windData=null, windLoading=false;
+  function addWind(data,btn){
+    if(windLayer){ map.removeLayer(windLayer); windLayer=null; }  // 중복 방지
+    windLayer=L.velocityLayer({
+      displayValues:true,
+      displayOptions:{velocityType:'해상 바람',position:'bottomleft',emptyString:'바람 데이터 없음',
+        angleConvention:'meteoCW',displayPosition:'위치',displayEmptyString:'—',
+        speedUnit:'m/s',directionString:'풍향',speedString:'풍속',angleString:''},
+      data:data, minVelocity:0, maxVelocity:25, velocityScale:0.008,
+      // 진한 고대비 컬러스케일(연한 바다색 위에서도 잘 보이게, 손유석 요청): 남색→청록→녹→황→주황→적
+      colorScale:['#1a237e','#1565c0','#0097a7','#2e7d32','#f9a825','#ef6c00','#c62828'],
+      opacity:0.94, particleAge:60, lineWidth:1.1});
+    windLayer.addTo(map); windOn=true; btn.classList.add('on');
+  }
+  function toggleWind(btn){
+    if(!L.velocityLayer){ alert('바람 레이어 로드 실패(CDN). 새로고침 후 재시도'); return; }
+    if(windLoading) return;                                  // 중복 클릭 락
+    if(windOn){ if(windLayer) map.removeLayer(windLayer); windLayer=null; windOn=false; btn.classList.remove('on'); return; }
+    if(windData){ addWind(windData,btn); return; }
+    windLoading=true; btn.textContent='⏳';
+    fetch('{{ url_for("api_fleet_map_wind") }}').then(r=>r.json()).then(d=>{
+      if(!d.grid){ alert('바람 데이터 아직 없음 — 맥 스케줄러 첫 동기화 대기'); return; }
+      windData=d.grid; addWind(windData,btn);
+    }).catch(()=>{ alert('바람 데이터 로드 실패'); })
+      .finally(()=>{ windLoading=false; btn.textContent='🌬'; });
+  }
+  const WindCtl=L.Control.extend({options:{position:'topleft'},onAdd:function(){
+    const c=L.DomUtil.create('div','leaflet-bar fm-windbtn');
+    const a=L.DomUtil.create('a','',c); a.href='#'; a.title='해상 바람(GFS) 표시 토글 — 태풍/열대저기압'; a.innerHTML='🌬';
+    L.DomEvent.on(a,'click',function(e){L.DomEvent.preventDefault(e);L.DomEvent.stopPropagation(e);toggleWind(a);});
+    setTimeout(()=>toggleWind(a),300);   // 기본 ON(바람 보이게) — 버튼 누르면 끔(손유석)
+    return c;}});
+  map.addControl(new WindCtl());
+  let FLEET=[],markers=[],routeLayer=null,trackLayer=null,portMarkers=[],curSup='__all',fmQ='',STALE=null,MYSUP=null;
+  function icon(v){
+    const due=v.cls_due_state==='overdue'?' due-overdue':(v.cls_due_state==='soon'?' due-soon':'');
+    const sire=v.sire_obs_overdue?'<span class="sire-flag" title="SIRE 검사일 +3주 초과 · Observation 미완료"></span>':'';
+    // 선위소스 표시: 이메일모드=📡, AIS 끊김(이메일후보)=노란 경고점
+    const pos=v.email_watch
+      ? '<span title="이메일 선위 모드(AIS off 대응)" style="position:absolute;top:-7px;left:-7px;font-size:12px;line-height:1">📡</span>'
+      : (v.ais_stale?'<span title="AIS 신호 끊김 — 이메일 선위 후보" style="position:absolute;top:-5px;left:-5px;width:10px;height:10px;border-radius:50%;background:#e0a800;border:1.5px solid #fff;box-shadow:0 0 0 1px #b7791f"></span>':'');
+    return L.divIcon({className:'',iconSize:[27,27],iconAnchor:[13,13],html:'<div class="ship '+(v.color||'gray')+due+'" style="position:relative">🚢'+sire+pos+'</div>'});
+  }
+
+  fetch('{{ url_for("api_fleet_map_data") }}').then(r=>r.json()).then(d=>{
+    FLEET=d.fleet||[];
+    STALE=d.staleness; MYSUP=d.my_supervisor||null;
+    document.getElementById('fmUpdated').textContent= d.empty ? '데이터 없음 — 맥 스케줄러 첫 동기화 대기'
+      : ('⟳ 온디맨드+맥 스케줄러 · 선위 '+(d.generated_at||'')+' · TRMT '+String(d.trmt_generated_at||'').slice(0,16));
+    if(!FLEET.length){renderAlert();document.querySelector('.fm-stage').insertAdjacentHTML('beforeend','<div class="fm-empty">표시할 선박이 없습니다.</div>');return;}
+    FLEET.forEach(v=>{
+      const m=L.marker([v.lat,v.lng],{icon:icon(v)}).addTo(map);
+      const tt=L.tooltip({permanent:true,direction:'top',offset:[0,-14],className:'ship-label'}).setContent(v.name).setLatLng([v.lat,v.lng]);tt.addTo(map);
+      m.on('click',()=>openV(v));markers.push({v,m,tt});
+    });
+    const bar=document.getElementById('fmSup');
+    const sups=d.supervisors||[];
+    // 감독 1명뿐이면 그 감독이 기본(전체 버튼 불필요), 아니면 로그인 감독/전체
+    const defKey=(sups.length===1)?sups[0]:((MYSUP && sups.indexOf(MYSUP)>=0)?MYSUP:'__all');
+    if(defKey!=='__all') curSup=defKey;
+    const mk=(label,key,cnt)=>{const b=document.createElement('button');b.innerHTML=esc(label)+'<span class="n">'+cnt+'</span>';if(key===defKey)b.classList.add('on');b.onclick=()=>filt(key,b);bar.appendChild(b);return b;};
+    if(sups.length>1) mk('전체','__all',FLEET.length);   // 감독 단일이면 전체 버튼 생략(손유석 전용)
+    sups.forEach(s=>mk(s,s,FLEET.filter(v=>v.supervisor===s).length));
+    applyFilters(); renderAlert();
+    // 선명 검색: 입력하면 일치 선박만 표시, 단일 일치면 그쪽으로 이동(줌 유지)
+    const si=document.getElementById('fmSearch');
+    if(si){
+      si.addEventListener('input',()=>{ fmQ=si.value.trim().toLowerCase(); const vis=applyFilters();
+        if(fmQ && vis.length===1){ map.panTo([vis[0].v.lat,vis[0].v.lng]); } });
+      si.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ const vis=applyFilters();
+        if(vis.length){ map.panTo([vis[0].v.lat,vis[0].v.lng]); openV(vis[0].v); } } });
+    }
+  }).catch(()=>{document.getElementById('fmUpdated').textContent='데이터 로드 실패';});
+
+  // 감독필터 + 선명검색 동시 적용. 보이는 마커 배열 반환.
+  function applyFilters(){
+    const vis=[];
+    markers.forEach(o=>{
+      const supOK = curSup==='__all' || o.v.supervisor===curSup;
+      const qOK = !fmQ || (o.v.name||'').toLowerCase().includes(fmQ);
+      const show = supOK && qOK;
+      if(show){o.m.addTo(map);o.tt.addTo(map);vis.push(o);}else{map.removeLayer(o.m);map.removeLayer(o.tt);}
+    });
+    return vis;
+  }
+  function filt(key,btn){
+    curSup=key;
+    document.querySelectorAll('#fmSup button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
+    applyFilters();renderAlert();fmClose();
+  }
+  // 선위 소스 라벨: 이메일 override > AIS(vesseltracker) > SVMS noon. 끊김 경고 포함.
+  function posSrcLabel(v){
+    if(v.pos_source==='email')
+      return '<span style="color:#b7791f">📡 위치=Master 이메일'+(v.pos_reported_at?' ('+esc(String(v.pos_reported_at).slice(0,16).replace("T"," "))+')':'')+'</span>';
+    if(String(v.position_source||'').indexOf('AIS')>=0){
+      const ts=v.position_ts?' ('+esc(String(v.position_ts).slice(0,16).replace("T"," "))+')':'';
+      return '<span style="color:#2f6f9f">🛰 위치=AIS</span>'+ts+(v.ais_stale?' <span style="color:#b7791f">⚠ 신호 끊김</span>':'');
+    }
+    return '(SVMS noon)';
+  }
+  // AIS off 대응 토글: 켜면 그 배가 이메일 선위 watch 등록 → 워처가 Outlook 메일에서 선위 갱신
+  function emailToggle(v){
+    const on=!!v.email_watch;
+    const warn=v.ais_stale?' <span style="color:#b7791f;font-size:11px">AIS 끊김 — 이메일 선위 권장</span>':'';
+    return '<div class="fm-line"><span class="lk">🛰️ AIS off → 이메일선위</span><span class="lv">'+
+      '<button onclick="fmToggleEmail(\''+esc(v.name).replace(/'/g,"\\'")+'\','+(on?'false':'true')+')" '+
+      'style="cursor:pointer;border:1px solid '+(on?'#b7791f':'var(--border)')+';background:'+(on?'#fef3c7':'var(--surface)')+
+      ';color:'+(on?'#92400e':'var(--text)')+';border-radius:12px;padding:2px 10px;font-size:12px;font-weight:600">'+
+      (on?'ON · 해제':'OFF · 켜기')+'</button>'+warn+'</span></div>';
+  }
+  window.fmToggleEmail=function(vessel,enable){
+    fetch('{{ url_for("api_fleet_map_email_watch_set") }}',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({vessel:vessel,enabled:enable})})
+      .then(r=>r.json()).then(res=>{
+        if(!res.ok){alert('토글 실패: '+(res.error||''));return;}
+        // 데이터 새로고침해서 마커/패널 반영
+        location.reload();
+      }).catch(()=>alert('토글 요청 실패'));
+  };
+  // slowspace 섹션: 최신 동정만(Notification 있을 때만). ETA/Next Port는 표시 안 함(손유석 지시).
+  function slowSec(v){
+    if(!v.slow_last_notif) return '';
+    return '<div class="fm-sec">Slow · 최신 동정</div>'+
+      '<div class="fm-line"><span class="lk">동정</span><span class="lv">'+esc(v.slow_last_notif.text||'')+(v.slow_last_notif.ts?' <small>('+esc(String(v.slow_last_notif.ts).slice(0,16))+')</small>':'')+'</span></div>';
+  }
+  function openV(v){
+    document.getElementById('fmName').textContent=v.name;
+    document.getElementById('fmSubt').textContent=esc(v.cls||v.type||'')+' · 감독 '+esc(v.supervisor||'-')+' · '+v.lat.toFixed(1)+'°, '+v.lng.toFixed(1)+'°';
+    const bl=v.bl==='L'?'lade':(v.bl==='B'?'ball':'gray');
+    const blTxt=v.bl==='L'?'🛢 Laden':(v.bl==='B'?'💧 Ballast':'B/L —');
+    document.getElementById('fmBadges').innerHTML='<span class="pill '+bl+'">'+blTxt+'</span>'+
+      '<span class="pill '+(v.color==='green'?'green':v.color)+'">'+(v.color==='green'?'✓ 이슈없음':(v.coc?'COC/Flag':(v.urgent?'Urgent':'이슈')))+'</span>'+
+      (v.status?'<span class="pill gray">'+esc(v.status)+'</span>':'');
+    const vet=(v.vetting_open!=null)?'<span class="pill '+(v.vetting_open>2?'red':(v.vetting_open?'amber':'green'))+'">Open '+v.vetting_open+'</span>':'<span class="fm-note">미연동</span>';
+    const cargo=v.cargo_op_applicable?('<div class="fm-sec">Cargo Operation (VLCC/LR · SVMS noon)</div><div class="fm-line"><span class="lk">상태</span><span class="lv">'+(v.cargo_op?esc(v.cargo_op):'<span class="fm-note">—</span>')+'</span></div>'):'';
+    const ev=encodeURIComponent(v.name);
+    // 4번째 카드: VLCC/LR=SIRE(Vetting), 그외=Condition Survey 총 open
+    const isSire=v.cargo_op_applicable;
+    const f4=isSire
+      ? {href:'/vetting-status?vessel='+ev, k:'🛡 SIRE', val:(v.sire_open!=null?v.sire_open:'—'), unit:(v.sire_obs_overdue?' open · 3주↑':(v.sire_open!=null?' open':'')), cls:(v.sire_obs_overdue?'red':(v.sire_open?'amber':'green'))}
+      : {href:'/condition-survey?vessel='+ev, k:'🔧 Cond.Survey', val:(v.cs_open!=null?v.cs_open:'—'), unit:' open', cls:(v.cs_open?'blue':'green')};
+    const card=(href,cls,k,val,unit)=>'<a class="fm-card '+cls+'" href="'+href+'"><div class="k">'+k+'</div><div class="v">'+val+'<small>'+unit+'</small></div></a>';
+    // Class/Flag 만기 경고 배너(overdue/임박)
+    const dueLine = v.cls_due_state ? (
+      '<a class="fm-duewarn '+v.cls_due_state+'" href="/class-status?vessel='+ev+'">⚠ Class/Flag 만기 '+
+      (v.cls_due_state==='overdue' ? ('<b>'+Math.abs(v.cls_due_days)+'일 초과</b>') : ('<b>D-'+v.cls_due_days+'</b>'))+
+      ' · '+esc(v.cls_due_date||'')+' ›</a>') : '';
+    document.getElementById('fmBody').innerHTML=
+      '<div class="fm-grid">'+
+      card('/?vessel='+ev, v.issues_open?'red':'green', '📋 현재 이슈', v.issues_open, ' 건')+
+      card('/class-status?vessel='+ev, v.coc?'red':'green', '⚓ COC/Flag', v.coc, ' 건')+
+      card('/?vessel='+ev+'&priority='+encodeURIComponent('Urgent'), v.urgent?'amber':'green', '🚨 Urgent', v.urgent, ' 건')+
+      card(f4.href, f4.cls, f4.k, f4.val, f4.unit)+
+      '</div>'+
+      dueLine+
+      '<div class="fm-sec">운항 상태 '+posSrcLabel(v)+'</div>'+
+      emailToggle(v)+
+      '<div class="fm-line"><span class="lk">Ballast/Laden</span><span class="lv"><span class="pill '+bl+'">'+(v.bl==='L'?'Laden':(v.bl==='B'?'Ballast':'—'))+'</span></span></div>'+
+      '<div class="fm-line"><span class="lk">상태/침로/속력</span><span class="lv">'+esc(v.status||'—')+' · '+(v.course!=null?v.course:'—')+'° · '+(v.speed!=null?v.speed:'—')+' kn</span></div>'+
+      cargo+
+      '<div class="fm-sec">Vetting</div><div class="fm-line"><span class="lk">현황</span><span class="lv">'+vet+'</span></div>'+
+      '<div class="fm-line"><span class="lk">최근/Plan</span><span class="lv">'+esc(v.vetting_plan||'—')+'</span></div>'+
+      '<div class="fm-sec">항로 (운항보고서 Schedule)</div>'+
+      '<div class="fm-line"><span class="lk">In Port</span><span class="lv">'+esc((v.prev_port&&v.prev_port.name)||'—')+'</span></div>'+
+      '<div class="fm-line"><span class="lk">Next Port</span><span class="lv">'+esc((v.next_port&&v.next_port.name)||'—')+(v.eta?' <span class="fm-eta">ETA '+esc(v.eta)+'</span>':'')+'</span></div>'+
+      slowSec(v);
+    document.getElementById('fmPanel').classList.add('open');drawRoute(v);
+  }
+  window.fmClose=function(){document.getElementById('fmPanel').classList.remove('open');clearRoute();};
+  function portDot(xy,label){const pm=L.marker(xy,{icon:L.divIcon({className:'',html:'<div class="port"></div>',iconSize:[9,9],iconAnchor:[5,5]})}).addTo(map);
+    const ptt=L.tooltip({permanent:true,direction:'bottom',offset:[0,4],className:'port-label'}).setContent(esc(label)).setLatLng(xy);ptt.addTo(map);portMarkers.push(pm,ptt);}
+  function clearRoute(){[routeLayer,trackLayer].forEach(l=>l&&map.removeLayer(l));routeLayer=trackLayer=null;portMarkers.forEach(p=>map.removeLayer(p));portMarkers=[];if(window._fmA)clearInterval(window._fmA);}
+  function drawRoute(v){
+    clearRoute();const all=[[v.lat,v.lng]];
+    // 회색 noon 항적(breadcrumb)은 표시 안 함 — noon 위치 튐으로 지저분. In→Next searoute만.
+    if(v.prev_port&&v.prev_port.xy){portDot(v.prev_port.xy,(v.prev_port.name||'In Port')+' · 출항');all.push(v.prev_port.xy);}
+    if(v.next_port&&v.next_port.xy){portDot(v.next_port.xy,(v.next_port.name||'Next Port')+' · 도착예정');all.push(v.next_port.xy);}
+    const legs=(v.route_legs&&v.route_legs.length)?v.route_legs:[];
+    if(legs.length){routeLayer=L.polyline(legs,{color:'#2f6f9f',weight:3,opacity:.9,dashArray:'2 9'}).addTo(map);
+      let off=0;window._fmA=setInterval(()=>{off=(off-2)%22;routeLayer.setStyle({dashOffset:String(off)});},60);}
+    // 클릭 시 자동 줌/이동 없음 — 줌은 스크롤로만 (손유석 요청)
+  }
+  setTimeout(()=>map.invalidateSize(),200);
+})();
+
+// 오늘 일정 팝오버 — 칩 클릭 시 당일 일정 전체 표시(잘림 없음). 일정 0건이면 그냥 캘린더로 이동.
+function closeTodaySched(){
+  var pop=document.getElementById('todaySchedPop');
+  if(!pop||!pop.classList.contains('open'))return;
+  pop.classList.remove('open');
+  var chip=document.getElementById('todaySchedChip');if(chip)chip.setAttribute('aria-expanded','false');
+}
+function toggleTodaySched(ev){
+  var pop=document.getElementById('todaySchedPop');
+  if(!pop) return true;                 // 일정 없음 → 링크대로 캘린더 이동
+  ev.preventDefault();
+  var chip=document.getElementById('todaySchedChip');
+  if(pop.classList.contains('open')){closeTodaySched();return false;}
+  var r=chip.getBoundingClientRect();
+  pop.style.left='-9999px';pop.style.top='0px';   // 임시 배치 후 실측
+  pop.classList.add('open');
+  var pr=pop.getBoundingClientRect();
+  // 좌우: 우측 화면넘침 보정
+  var left=Math.min(r.left, window.innerWidth-12-pr.width);
+  pop.style.left=Math.round(Math.max(12,left))+'px';
+  // 상하: 기본 칩 아래. 아래 공간 부족 & 위 공간 충분하면 위로 flip(올마이트 지적)
+  var top=r.bottom+6;
+  if(top+pr.height>window.innerHeight-12 && r.top-6-pr.height>12){ top=r.top-6-pr.height; }
+  top=Math.min(top, window.innerHeight-12-pr.height);   // 둘 다 부족한 극단 viewport 하단 clamp
+  pop.style.top=Math.round(Math.max(12,top))+'px';
+  chip.setAttribute('aria-expanded','true');
+  return false;
+}
+document.addEventListener('click',function(e){
+  var pop=document.getElementById('todaySchedPop');
+  if(!pop||!pop.classList.contains('open'))return;
+  if(e.target.closest('#todaySchedPop')||e.target.closest('#todaySchedChip'))return;
+  closeTodaySched();
+});
+document.addEventListener('keydown',function(e){ if(e.key==='Escape')closeTodaySched(); });
+// scroll/resize 시 칩과 팝오버 위치 어긋남 → 닫기(올마이트 지적). 내부 스크롤은 window로 안 올라와 안전.
+window.addEventListener('resize',closeTodaySched);
+window.addEventListener('scroll',closeTodaySched,{passive:true});
+</script>
+{% endblock %}

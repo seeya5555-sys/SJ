@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}Class Status · TRMT3{% endblock %}
+
+{% block content %}
+
+<h1 class="page-title">Class Status</h1>
+
+<!-- 감독 탭 바 -->
+<div class="tab-bar" id="cls-tab-bar"></div>
+
+<!-- 툴바: 업로드 + 검색 + 컨텍스트 -->
+<div class="cs-toolbar">
+  {% if session.role == 'admin' %}
+  <button class="btn btn-primary" id="cls-push-btn" type="button"
+          title="선급검사 API에서 담당선박 Class Status를 받아 업데이트(온디맨드)"
+          style="border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8">
+    📥 API에서 Pushing
+  </button>
+  {% endif %}
+  <button class="btn btn-outline" type="button" onclick="location.href='/api/class-status/export-all'"
+          title="전체 선박 Class Status 엑셀 다운로드">⬇ 전체 엑셀</button>
+  <button class="btn btn-outline" id="cls-export-mgr-btn" type="button"
+          title="관리사 선택 → 그 관리사 선박 Class Status 일괄 엑셀 추출">📑 관리사별 추출</button>
+  <div class="cls-bulk-toggle">
+    <button class="btn btn-outline btn-sm" id="cls-collapse-all" type="button" title="모든 선박 카드 접기">전체 접기</button>
+    <button class="btn btn-outline btn-sm" id="cls-expand-all" type="button" title="모든 선박 카드 펼치기">전체 펼치기</button>
+  </div>
+  <div class="cs-search-wrap">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" class="cs-search-icon">
+      <circle cx="11" cy="11" r="8"/>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input type="text" id="cls-search" class="cs-search-input"
+           placeholder="선박명 / 지적 내용 / 요약 검색...">
+    <button type="button" class="cs-search-clear" id="cls-search-clear" title="검색어 지우기" hidden>×</button>
+  </div>
+  <span class="cs-context" id="cls-context"></span>
+</div>
+
+<!-- 선박 리스트 -->
+<div id="cls-list" class="cs-vessel-list"></div>
+
+<!-- 미매칭 버킷 -->
+<div id="cls-unmatched"></div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/cls.js') }}"></script>
+<script>
+/* Fleet Map 카드 클릭 → ?vessel= 선박 검색 자동적용 */
+(function(){var v=new URLSearchParams(location.search).get('vessel');if(!v)return;
+  var c=0,t=setInterval(function(){var el=document.getElementById('cls-search');
+    if(el){el.value=v;el.dispatchEvent(new Event('input',{bubbles:true}));}
+    if(++c>=12)clearInterval(t);},500);})();
+</script>
+{% endblock %}

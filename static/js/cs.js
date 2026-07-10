@@ -1,0 +1,1672 @@
+/* ═══════════════════════════════════════════════════════════════
+   TRMT3 — Condition Survey
+   ═══════════════════════════════════════════════════════════════ */
+
+// localStorage에서 펼친 상태 복구
+function loadExpandedSet() {
+  try {
+    const raw = localStorage.getItem('trmt_cs_expanded');
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw));
+  } catch (_) { return new Set(); }
+}
+function saveExpandedSet() {
+  try {
+    localStorage.setItem('trmt_cs_expanded', JSON.stringify([...S.expandedSurveys]));
+  } catch (_) {}
+}
+// 선박 카드 펼침 — 매 진입 시 항상 모두 접힘 상태로 시작
+// (localStorage 사용 안 함. 같은 페이지 안에서 펼친 건 유지되지만,
+//  페이지 다시 진입하면 다시 모두 접힘)
+
+// CS에서 숨길 감독 이름 (대소문자 무시) — Daily 업무관리는 영향 없음
+const HIDDEN_SUPERVISOR_NAMES_CS = ['FLEET AGENDA'];
+const ONLY_SUP_CS = '손유석';  // 손유석 단독 운영 — '전체'/타 감독 탭 제거
+function isHiddenSupervisor(sup) {
+  return HIDDEN_SUPERVISOR_NAMES_CS.includes((sup.name || '').toUpperCase());
+}
+
+// ───────────── State ─────────────
+const S = {
+  user:        window.TRMT?.user || {},
+  supervisors: [],
+  data:        [],
+  activeTab:   'all',
+  year:        new Date().getFullYear(),
+  search:      '',
+  expandedSurveys: loadExpandedSet(),
+  expandedVessels: new Set(),
+  hiddenVesselIds: new Set(),    // CS 전체 탭에서 제외할 vessel id
+};
+
+// ───────────── Helpers ─────────────
+function $(s, r=document) { return r.querySelector(s); }
+function escHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+  ));
+}
+function el(tag, attrs={}, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === 'class')      e.className = v;
+    else if (k === 'html')  e.innerHTML = v;
+    else if (k.startsWith('on') && typeof v === 'function')
+                             e.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (v === true)    e.setAttribute(k, '');
+    else                    e.setAttribute(k, v);
+  }
+  for (const c of children.flat()) {
+    if (c === null || c === undefined || c === false) continue;
+    e.append(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+  return e;
+}
+
+// ───────────── API ─────────────
+async function api(url, opts={}) {
+  const isForm = opts.body instanceof FormData;
+  const headers = isForm ? {} : {'Content-Type':'application/json'};
+  const res = await fetch(url, { headers, ...opts });
+  const ct = res.headers.get('content-type') || '';
+  const data = ct.includes('json') ? await res.json() : await res.text();
+  if (!res.ok) {
+    const msg = (typeof data === 'object' && data.error) ? data.error : `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return data;
+}
+
+// ───────────── Tabs ─────────────
+function renderTabs() {
+  const bar = $('#cs-tab-bar');
+  bar.innerHTML = '';
+  // 손유석 단독 운영 — '전체' 탭 및 타 감독 탭 제거
+  for (const s of S.supervisors) {
+    if ((s.name || '').trim() !== ONLY_SUP_CS) continue;
+    bar.append(tabEl(s.id, s.name, s.color, null, S.activeTab == s.id));
+  }
+}
+function tabEl(id, name, color, _count, active) {
+  const t = el('div', { class: 'tab' + (active ? ' active' : ''), 'data-id': id },
+    el('span', { class: `tab-dot dot-${color}` }),
+    name);
+  t.addEventListener('click', () => switchTab(id));
+  return t;
+}
+async function switchTab(id) {
+  S.activeTab = id;
+  renderTabs();
+  await reloadData();
+}
+
+function renderContext() {
+  const c = $('#cs-context');
+  const q = (S.search || '').trim().toLowerCase();
+  let totalCount = S.data.length;
+  let filteredCount = totalCount;
+  if (q) {
+    filteredCount = S.data.filter(item => {
+      const v = item.vessel;
+      return (v.name && v.name.toLowerCase().includes(q))
+          || (v.short_name && v.short_name.toLowerCase().includes(q));
+    }).length;
+  }
+  const tabName = S.activeTab === 'all'
+    ? '전체'
+    : (S.supervisors.find(x => x.id == S.activeTab)?.name + ' 담당' || '');
+
+  if (q) {
+    c.textContent = `${S.year}년 · ${tabName} 선박 ${filteredCount}/${totalCount}척  (검색: "${S.search}")`;
+  } else {
+    c.textContent = `${S.year}년 · ${tabName} 선박 ${totalCount}척`;
+  }
+}
+
+// ───────────── Render ─────────────
+const QUARTERS = [1, 2, 3, 4];
+
+function render() {
+  const list = $('#cs-vessel-list');
+  list.innerHTML = '';
+  if (!S.data.length) {
+    list.append(el('div', { class: 'cs-empty' },
+      '담당 선박이 없습니다. Daily 업무관리에서 선박을 추가하세요.'));
+    return;
+  }
+
+  // 검색어로 선박명 필터링 (대소문자 무시 · 부분 일치 · 약칭도 검색 대상)
+  const q = (S.search || '').trim().toLowerCase();
+  const filtered = q ? S.data.filter(item => {
+    const v = item.vessel;
+    return (v.name && v.name.toLowerCase().includes(q))
+        || (v.short_name && v.short_name.toLowerCase().includes(q));
+  }) : S.data;
+
+  if (q && !filtered.length) {
+    list.append(el('div', { class: 'cs-empty' },
+      `"${S.search}" 와(과) 일치하는 선박이 없습니다.`));
+    return;
+  }
+
+  // 선종별 그룹화
+  const TYPE_ORDER = ['VLCC', 'AFRAMAX', 'MR', 'LR', 'CNTR', '기타'];
+  const TYPE_LABEL = {
+    VLCC: 'VLCC', AFRAMAX: 'AFRAMAX', MR: 'MR', LR: 'LR',
+    CNTR: 'CNTR (Container)', '기타': '기타',
+  };
+  const byType = {};
+  for (const item of filtered) {
+    const type = item.vessel.vessel_type || '기타';
+    if (!byType[type]) byType[type] = [];
+    byType[type].push(item);
+  }
+  const types = Object.keys(byType).sort((a, b) => {
+    const ai = TYPE_ORDER.indexOf(a);
+    const bi = TYPE_ORDER.indexOf(b);
+    return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+  });
+
+  for (const type of types) {
+    const group = byType[type];
+    const groupBlock = el('div', { class: 'cs-type-group' });
+    groupBlock.append(el('div', { class: `cs-type-header cs-type-${type.toLowerCase()}` },
+      el('span', { class: 'cs-type-badge' }, TYPE_LABEL[type] || type),
+      el('span', { class: 'cs-type-count' }, `${group.length}척`),
+    ));
+    for (const item of group) {
+      groupBlock.append(vesselBlock(item));
+    }
+    list.append(groupBlock);
+  }
+}
+
+// ───────────── Vendor 색상 매핑 ─────────────
+const VENDOR_COLOR_MAP = {
+  'AALMAR': 'blue',
+  'IDWAL':  'amber',
+  'OTHERS': 'gray',
+};
+function vendorColor(vendor) {
+  if (!vendor) return null;
+  const upper = vendor.trim().toUpperCase();
+  if (VENDOR_COLOR_MAP[upper]) return VENDOR_COLOR_MAP[upper];
+  // AALMAR/IDWAL이 부분 포함되어 있으면 매칭
+  if (upper.includes('AALMAR')) return 'blue';
+  if (upper.includes('IDWAL'))  return 'amber';
+  return 'gray';   // 그 외는 OTHERS 색상
+}
+
+// ───────────── Last update 라벨 ─────────────
+function lastUpdateLabel(updatedAt) {
+  if (!updatedAt) return el('span', { class: 'cs-last-update empty' }, '');
+  // updatedAt 형식: "2026-04-26 14:30:25"
+  const dateOnly = (updatedAt || '').slice(0, 10);
+  return el('span', {
+    class: 'cs-last-update',
+    title: `Status 마지막 변경: ${updatedAt}`,
+  }, '↻ ' + dateOnly);
+}
+
+function vesselSummary(item) {
+  // 접힌 상태에서도 보이는 요약: 1Q~4Q 분기별 Open 카운트 (미등록도 격자로 표시)
+  const surveys = item.surveys || {};
+  const wrap = el('span', { class: 'cs-vessel-summary' });
+
+  // 1Q ~ 4Q 격자 (미등록 분기는 회색 빈 셀)
+  for (const q of [1, 2, 3, 4]) {
+    const s = surveys[q];
+    const cell = el('span', { class: 'cs-q-summary' });
+    cell.append(el('span', { class: 'cs-q-label' }, `${q}Q`));
+    if (s) {
+      // vendor 색상 적용 (AALMAR=blue, IDWAL=amber, 기타=gray)
+      const vc = vendorColor(s.vendor);
+      if (vc) cell.classList.add(`cs-q-vendor-${vc}`);
+
+      const op = s.open_count || 0;
+      const cl = s.close_count || 0;
+      const num = el('span', { class: 'cs-q-num' });
+      // Open이 1+ 이면 빨간 강조, 모두 Closed면 초록 체크, 항목 0이면 –
+      if (op > 0) {
+        num.append(el('strong', { class: 'cs-q-open-on' }, String(op)));
+      } else if (cl > 0) {
+        num.append(el('strong', { class: 'cs-q-all-closed' }, '✓'));
+      } else {
+        num.append(el('span', { class: 'cs-q-empty-data' }, '–'));
+      }
+      cell.append(num);
+      // vendor 라벨 (있으면)
+      if (s.vendor) {
+        cell.append(el('span', { class: 'cs-q-vendor-label' },
+          (s.vendor || '').trim().slice(0, 6)));
+      }
+      cell.classList.add('has-data');
+      cell.title = s.vendor
+        ? `${q}Q · ${s.vendor} · ${s.inspection_date || '날짜 미정'}`
+        : `${q}Q · ${s.inspection_date || '날짜 미정'}`;
+    } else {
+      cell.append(el('span', { class: 'cs-q-num cs-q-blank' }, '–'));
+    }
+    wrap.append(cell);
+  }
+  return wrap;
+}
+
+function toggleVessel(vid) {
+  if (S.expandedVessels.has(vid)) S.expandedVessels.delete(vid);
+  else S.expandedVessels.add(vid);
+  render();
+}
+
+function vesselBlock(item) {
+  const v = item.vessel;
+  const block = el('div', { class: 'cs-vessel-block' });
+  const isExpanded = S.expandedVessels.has(v.id);
+
+  // 선박 헤더 (클릭으로 토글)
+  const head = el('div', {
+    class: 'cs-vessel-head' + (isExpanded ? ' expanded' : ''),
+    onclick: () => toggleVessel(v.id),
+    title: '클릭으로 분기 표 펼치기/접기',
+  },
+    el('span', { class: 'cs-vessel-caret' }, isExpanded ? '▼' : '▶'),
+    el('span', { class: 'cs-vessel-icon' }, '🚢'),
+    el('strong', { class: 'cs-vessel-name' }, v.name),
+    el('span', { class: 'cs-vessel-type' }, v.vessel_type || ''),
+    // Last update (Status 마지막 변경일)
+    lastUpdateLabel(item.last_updated),
+    // 요약 카운트 (접힌 상태에서도 보이도록)
+    vesselSummary(item),
+  );
+  block.append(head);
+
+  if (!isExpanded) return block;
+
+  // 분기 표
+  const table = el('table', { class: 'cs-quarter-table' });
+  const thead = el('thead', {},
+    el('tr', {},
+      el('th', { style: 'width:60px' }, 'Quarter'),
+      el('th', { style: 'width:110px' }, '시행사'),
+      el('th', { style: 'width:140px' }, 'Management'),
+      el('th', { style: 'width:140px' }, 'Inspection Date'),
+      el('th', { style: 'width:60px; text-align:center' }, 'Def'),
+      el('th', { style: 'width:60px; text-align:center' }, 'Obs'),
+      el('th', { style: 'width:70px; text-align:center' }, '합계'),
+      el('th', { style: 'width:60px; text-align:center' }, 'Open'),
+      el('th', { style: 'width:60px; text-align:center' }, 'Close'),
+      el('th', { class: 'cs-th-actions' }, ''),
+    )
+  );
+  table.append(thead);
+
+  const tbody = el('tbody');
+  for (const q of QUARTERS) {
+    const survey = item.surveys[q];   // undefined = 빈 분기
+    tbody.append(quarterRow(v.id, q, survey, v.name));
+    // 펼친 상태면 세부 행 추가
+    if (survey && S.expandedSurveys.has(survey.id)) {
+      tbody.append(detailRow(survey, v.name));
+    }
+  }
+  table.append(tbody);
+  block.append(el('div', { class: 'tbl-scroll' }, table));
+
+  return block;
+}
+
+// 선박→수신 담당자(영문 인사말). Daily 영문엑셀추출과 동일 매핑(EN_CONTACT).
+const CS_EN_CONTACT = {
+  indonesiaprosperity: 'Giorgos', southafricaprosperity: 'Giorgos',
+  kuwaitprosperity: 'Sergiy', cyprusprosperity: 'Nitin',
+  atlanticmerchant: 'Gerasimos', pacificmonaco: 'Gerasimos', atlanticbridge: 'Gerasimos',
+  pacificbeijing: 'Methew', atlanticexpress: 'Methew', atlanticgeneva: 'Methew',
+  atlanticsouth: 'Dmitry', atlanticgreen: 'Dmitry', atlanticnorth: 'Leonid',
+};
+const csEnNorm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// 분기 Defect List 엑셀 다운로드 + 복붙용 메일 드래프트 모달 (cls.js/app.js 패턴, cron 무관)
+function openCsExportMail(survey, vesselName) {
+  const vn = vesselName || '';
+  const vendor = survey.vendor || 'Condition';
+  const q = survey.quarter;
+  const dCnt = survey.defect_count, oCnt = survey.observation_count;
+  const who = CS_EN_CONTACT[csEnNorm(vn)] || 'Sir/Madam';
+  const draft =
+    `Subject: [Important!] M/V ${vn} - ${vendor} Survey Result & Defect List\n\n`
+    + `Dear ${who},\n\n`
+    + `Good day.\n\n`
+    + `Please find attached the result and defect list of the ${vendor} Survey carried out for ${q}Q.\n\n`
+    + `1. A total of ${dCnt} defects and ${oCnt} observations were identified during the survey.\n`
+    + `2. Kindly arrange rectification of all identified items within 1 month.\n`
+    + `3. Rectification progress is to be reported in the attached Excel file, including corrective actions taken, relevant photos, and OPEN/CLOSE status for each item.\n`
+    + `4. The updated Excel is to be submitted together with the Weekly Report every Monday until all items are closed.\n\n`
+    + `Your prompt attention and full cooperation are appreciated.\n\n`
+    + `Best regards,`;
+
+  const exportUrl = `/api/cs/surveys/${survey.id}/export`;   // 기존(깔끔한) 엑셀 템플릿 재사용
+  // 버튼 누르면 엑셀 자동 다운로드(내비게이션 없이) + 아래 메일 드래프트 모달
+  const ifr = document.createElement('iframe');
+  ifr.style.display = 'none'; ifr.src = exportUrl; document.body.appendChild(ifr);
+
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:12px;padding:20px;width:600px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25)';
+  box.innerHTML = `<div style="font-weight:700;font-size:15px;margin-bottom:4px">📄 ${q}Q 엑셀 추출 + 메일 드래프트 <span style="font-weight:500;font-size:12px;color:#1d4ed8">· ${escHtml(vn)}</span></div>`
+    + `<div style="font-size:12px;color:#888;margin-bottom:12px">엑셀은 자동 다운로드됨. 아래 메일 드래프트 복사 → Outlook에 붙여넣고 엑셀 첨부해 발송. defect/observation·분기·수신인 자동.</div>`;
+  const dl = document.createElement('button');
+  dl.textContent = '⬇ 엑셀 다시 다운로드';
+  dl.style.cssText = 'width:100%;height:38px;border:1px solid #1f4e78;background:#1f4e78;color:#fff;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:12px';
+  dl.addEventListener('click', () => { ifr.src = exportUrl; });
+  box.appendChild(dl);
+  const lbl = document.createElement('div');
+  lbl.style.cssText = 'font-size:12px;font-weight:600;color:#555;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center';
+  const copyBtn = document.createElement('button');
+  copyBtn.textContent = '📋 복사';
+  copyBtn.style.cssText = 'border:1px solid #d3d1c7;background:#faf9f5;border-radius:6px;padding:2px 10px;font-size:12px;cursor:pointer';
+  lbl.append(Object.assign(document.createElement('span'), { textContent: '메일 드래프트' }), copyBtn);
+  box.appendChild(lbl);
+  const ta = document.createElement('textarea');
+  ta.value = draft; ta.readOnly = true;
+  ta.style.cssText = 'width:100%;height:300px;border:1px solid #d3d1c7;border-radius:8px;padding:10px;font-size:12px;font-family:ui-monospace,monospace;line-height:1.5;resize:vertical';
+  box.appendChild(ta);
+  copyBtn.addEventListener('click', () => {
+    ta.select(); navigator.clipboard.writeText(ta.value).then(() => { copyBtn.textContent = '✓ 복사됨'; setTimeout(() => copyBtn.textContent = '📋 복사', 1500); });
+  });
+  const close = document.createElement('button');
+  close.textContent = '닫기';
+  close.style.cssText = 'margin-top:12px;width:100%;height:34px;border:1px solid #d3d1c7;background:#fff;border-radius:8px;font-size:13px;cursor:pointer';
+  close.addEventListener('click', () => ov.remove());
+  box.appendChild(close);
+  ov.appendChild(box);
+  ov.addEventListener('click', (e) => { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+}
+
+function quarterRow(vesselId, quarter, survey, vesselName) {
+  const tr = el('tr', { class: 'cs-quarter-row' + (survey ? ' has-data' : ' empty') });
+
+  // Quarter 셀 — 클릭 시 펼치기/모달
+  const qCell = el('td', { class: 'cs-q-label' });
+  if (survey) {
+    const expanded = S.expandedSurveys.has(survey.id);
+    qCell.append(
+      el('span', { class: 'cs-caret' }, expanded ? '▼' : '▶'),
+      ` ${quarter}Q`,
+    );
+    qCell.style.cursor = 'pointer';
+    qCell.addEventListener('click', () => toggleExpand(survey.id));
+  } else {
+    qCell.textContent = `${quarter}Q`;
+    qCell.classList.add('disabled');
+  }
+  tr.append(qCell);
+
+  // 시행사 — 드롭다운 추천(AALMAR/IDWAL/OTHERS) + 자유 입력 가능
+  tr.append(editableCell(
+    survey, vesselId, quarter, 'vendor',
+    survey?.vendor || '',
+    'combo', ['AALMAR', 'IDWAL', 'OTHERS'],
+  ));
+  // Management
+  tr.append(editableCell(
+    survey, vesselId, quarter, 'management',
+    survey?.management || '',
+    'text',
+  ));
+  // Inspection Date
+  tr.append(editableCell(
+    survey, vesselId, quarter, 'inspection_date',
+    survey?.inspection_date || '',
+    'date',
+  ));
+
+  // 카운트 5개 (Def/Obs/합계/Open/Close, 중앙정렬)
+  if (survey) {
+    tr.append(countEditableCell(survey, 'manual_defect_count',      survey.defect_count,      survey.defect_manual));
+    tr.append(countEditableCell(survey, 'manual_observation_count', survey.observation_count, survey.observation_manual));
+    // 합계는 자동 (Def + Obs)
+    tr.append(el('td', { class: 'cs-cnt cs-cnt-total', style: 'text-align:center' },
+      String(survey.total_count)));
+    // Open 카운트 — 자동 (총 - Close), 별도 셀
+    tr.append(el('td', { class: 'cs-cnt cs-cnt-open', style: 'text-align:center' },
+      String(survey.open_count)));
+    tr.append(countEditableCell(survey, 'manual_close_count',       survey.close_count,       survey.close_manual, true));
+  } else {
+    tr.append(el('td', { class: 'cs-cnt', style: 'text-align:center' }, '–'));
+    tr.append(el('td', { class: 'cs-cnt', style: 'text-align:center' }, '–'));
+    tr.append(el('td', { class: 'cs-cnt cs-cnt-total', style: 'text-align:center' }, '–'));
+    tr.append(el('td', { class: 'cs-cnt cs-cnt-open',  style: 'text-align:center' }, '–'));
+    tr.append(el('td', { class: 'cs-cnt cs-cnt-close', style: 'text-align:center' }, '–'));
+  }
+
+  // 액션 (첨부 + 메모 + 삭제)
+  const actions = el('td', { class: 'cs-actions' });
+  if (survey) {
+    // 📎 첨부
+    const attBtn = el('button', {
+      class: 'icon-btn',
+      title: `첨부파일${survey.attach_count ? ` (${survey.attach_count})` : ''}`,
+      onclick: (e) => { e.stopPropagation(); openAttachModal(survey); },
+    });
+    attBtn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>`;
+    if (survey.attach_count > 0) {
+      attBtn.classList.add('has-attach');
+      const badge = el('span', { class: 'attach-badge' }, String(survey.attach_count));
+      attBtn.append(badge);
+    }
+    actions.append(attBtn);
+
+    // 📝 메모
+    const memoBtn = el('button', {
+      class: 'icon-btn',
+      title: 'Overall Remark / 상세 편집',
+      onclick: (e) => { e.stopPropagation(); openSurveyModal(vesselId, quarter, survey); },
+    });
+    memoBtn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+      <polyline points="14 2 14 8 20 8"/>
+      <line x1="9" y1="13" x2="15" y2="13"/>
+      <line x1="9" y1="17" x2="13" y2="17"/></svg>`;
+    if (survey.overall_remark) memoBtn.classList.add('has-memo');
+    actions.append(memoBtn);
+
+    // 📅 캘린더 등록
+    const calBtn = el('button', {
+      class: 'icon-btn',
+      title: '일정에 등록',
+      onclick: (e) => { e.stopPropagation(); addCsToCalendar(vesselId, quarter, survey); },
+    });
+    calBtn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+      <line x1="16" y1="2" x2="16" y2="6"/>
+      <line x1="8" y1="2" x2="8" y2="6"/>
+      <line x1="3" y1="10" x2="21" y2="10"/></svg>`;
+    actions.append(calBtn);
+
+    // 🗑 삭제
+    const rm = el('button', {
+      class: 'icon-btn danger',
+      title: '이 분기 서베이 삭제',
+      onclick: (e) => { e.stopPropagation(); deleteSurvey(survey); },
+    });
+    rm.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`;
+    actions.append(rm);
+  }
+  tr.append(actions);
+
+  return tr;
+}
+
+// 카운트 셀 (클릭 → 숫자 입력, 빈값 저장 시 자동 카운트로 복귀)
+function countEditableCell(survey, field, value, isManual, isClose = false) {
+  const td = el('td', {
+    class: 'cs-cnt cs-edit-cell' + (isClose ? ' cs-cnt-close' : '') + (isManual ? ' is-manual' : ''),
+    style: 'text-align:center',
+    title: isManual ? '수동 입력값 (클릭으로 수정, 빈칸 저장 시 자동값 복귀)' : '자동 카운트 (클릭으로 직접 입력)',
+  });
+  const display = el('div', { class: 'cs-cell-display' }, String(value));
+  td.append(display);
+
+  td.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (td._editing) return;
+    td._editing = true;
+    td.innerHTML = '';
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.value = isManual ? String(value) : '';
+    input.placeholder = String(value);
+    input.className = 'cs-inline-input';
+    input.style.textAlign = 'center';
+    td.append(input);
+    input.focus();
+    input.select();
+
+    let done = false;
+    const save = async () => {
+      if (done) return; done = true;
+      td._editing = false;
+      const raw = input.value.trim();
+      // 빈값 = 자동 카운트로 복귀 (NULL)
+      const newVal = raw === '' ? null : Number(raw);
+      if (newVal !== null && (isNaN(newVal) || newVal < 0)) {
+        td.innerHTML = ''; td.append(display);
+        return;
+      }
+      try {
+        await api(`/api/cs/surveys/${survey.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ [field]: newVal === null ? '' : newVal }),
+        });
+        await reloadData();
+      } catch (err) {
+        alert('저장 실패: ' + err.message);
+        td.innerHTML = ''; td.append(display);
+      }
+    };
+    input.addEventListener('blur', save);
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') save();
+      if (ev.key === 'Escape') {
+        done = true; td._editing = false;
+        td.innerHTML = ''; td.append(display);
+      }
+    });
+  });
+
+  return td;
+}
+
+function editableCell(survey, vesselId, quarter, field, value, kind, options) {
+  const td = el('td', { class: 'cs-edit-cell' });
+  const display = el('div', { class: 'cs-cell-display' });
+
+  if (kind === 'select') {
+    display.textContent = value || '–';
+    if (!value) display.classList.add('placeholder');
+  } else {
+    display.textContent = value || '–';
+    if (!value) display.classList.add('placeholder');
+  }
+  td.append(display);
+
+  td.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (td._editing) return;
+    td._editing = true;
+    td.innerHTML = '';
+    let input;
+    if (kind === 'select') {
+      input = document.createElement('select');
+      for (const opt of options) {
+        const o = document.createElement('option');
+        o.value = opt; o.textContent = opt || '(미선택)';
+        if (opt === value) o.selected = true;
+        input.append(o);
+      }
+    } else if (kind === 'combo') {
+      // 드롭다운 추천 + 자유 입력 가능 (datalist 활용)
+      input = document.createElement('input');
+      input.type = 'text';
+      input.value = value || '';
+      input.setAttribute('list', `cs-dl-${field}`);
+      // datalist는 이미 td 외부에 있는지 확인 후 없으면 생성
+      let dl = document.getElementById(`cs-dl-${field}`);
+      if (!dl) {
+        dl = document.createElement('datalist');
+        dl.id = `cs-dl-${field}`;
+        document.body.append(dl);
+      }
+      dl.innerHTML = '';
+      for (const opt of (options || [])) {
+        if (!opt) continue;
+        const o = document.createElement('option');
+        o.value = opt;
+        dl.append(o);
+      }
+    } else if (kind === 'date') {
+      input = document.createElement('input');
+      input.type = 'date'; input.value = value || '';
+    } else {
+      input = document.createElement('input');
+      input.type = 'text'; input.value = value || '';
+    }
+    input.className = 'cs-inline-input';
+    td.append(input);
+    input.focus();
+    if (input.select) input.select();
+
+    let done = false;
+    const save = async () => {
+      if (done) return; done = true;
+      const newVal = input.value;
+      td._editing = false;
+      if (newVal === value) {
+        td.innerHTML = '';
+        td.append(display);
+        return;
+      }
+      try {
+        if (survey) {
+          await api(`/api/cs/surveys/${survey.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ [field]: newVal }),
+          });
+        } else {
+          // 신규 생성 (해당 분기 셀에 처음 값이 들어감)
+          const r = await api('/api/cs/surveys', {
+            method: 'POST',
+            body: JSON.stringify({
+              vessel_id: vesselId,
+              year: S.year,
+              quarter,
+              [field]: newVal,
+            }),
+          });
+        }
+        await reloadData();
+      } catch (err) {
+        alert('저장 실패: ' + err.message);
+        td.innerHTML = '';
+        td.append(display);
+      }
+    };
+    input.addEventListener('blur', save);
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') save();
+      if (ev.key === 'Escape') {
+        done = true; td._editing = false;
+        td.innerHTML = '';
+        td.append(display);
+      }
+    });
+  });
+
+  return td;
+}
+
+// ───────────── 펼치기 / 세부 행 (Findings) ─────────────
+function toggleExpand(surveyId) {
+  if (S.expandedSurveys.has(surveyId)) S.expandedSurveys.delete(surveyId);
+  else S.expandedSurveys.add(surveyId);
+  saveExpandedSet();
+  render();
+}
+
+function detailRow(survey, vesselName) {
+  const tr = el('tr', { class: 'cs-detail-row' });
+  const td = el('td', { colspan: 10, class: 'cs-detail-cell' });
+
+  // 보고서 → 항목 자동 생성 (Gemini) + 엑셀 추출(+메일 드래프트 모달)
+  td.append(el('div', { class: 'csx-bar' },
+    el('button', { class: 'btn btn-outline btn-sm', onclick: () => openCsExtract(survey) },
+      '📄 보고서에서 자동 생성'),
+    el('button', {
+      class: 'btn btn-outline btn-sm', style: 'margin-left:6px',
+      onclick: () => openCsExportMail(survey, vesselName),
+    }, '⬇ 엑셀 추출')));
+
+  const defects      = (survey.findings || []).filter(f => f.category === 'Defect');
+  const observations = (survey.findings || []).filter(f => f.category === 'Observation');
+
+  // 1) Overall Remark — 맨 위, Defect/Observation 섹션과 같은 스타일
+  if (survey.overall_remark) {
+    const sec = el('div', { class: 'cs-finding-section' });
+    sec.append(el('div', { class: 'cs-finding-header cs-cat-overall' },
+      el('span', { class: 'cs-cat-dot' }),
+      el('strong', {}, 'Overall Remark'),
+    ));
+    sec.append(el('div', { class: 'cs-overall-body' }, survey.overall_remark));
+    td.append(sec);
+  }
+
+  // 2) Defect 섹션
+  if (defects.length || (survey._inlineAdd && survey._inlineAdd.category === 'Defect')) {
+    td.append(findingsSection(survey, 'Defect', defects));
+  } else {
+    td.append(addOnlyBtn(survey, 'Defect'));
+  }
+
+  // 3) Observation 섹션
+  if (observations.length || (survey._inlineAdd && survey._inlineAdd.category === 'Observation')) {
+    td.append(findingsSection(survey, 'Observation', observations));
+  } else {
+    td.append(addOnlyBtn(survey, 'Observation'));
+  }
+
+  tr.append(td);
+  return tr;
+}
+
+function emptySection(survey) {
+  const wrap = el('div', { class: 'cs-finding-empty' });
+  wrap.append(el('div', { style: 'color:var(--text-tertiary); font-size:12px; margin-bottom:8px' },
+    '아직 등록된 항목이 없습니다. Defect 또는 Observation을 추가하세요.'));
+  wrap.append(addOnlyBtn(survey, 'Defect'));
+  wrap.append(addOnlyBtn(survey, 'Observation'));
+  return wrap;
+}
+
+function addOnlyBtn(survey, category) {
+  const btn = el('button', {
+    class: 'btn btn-outline btn-sm',
+    style: 'margin: 4px 6px 4px 0',
+    onclick: () => addBlankRow(survey, category),
+  }, `+ ${category} 추가`);
+  return btn;
+}
+
+function findingsSection(survey, category, findings) {
+  const sec = el('div', { class: 'cs-finding-section' });
+  const header = el('div', { class: `cs-finding-header cs-cat-${category.toLowerCase()}` },
+    el('span', { class: 'cs-cat-dot' }),
+    el('strong', {}, category),
+    el('span', { class: 'cs-cat-count' }, `(${findings.length}건)`),
+  );
+  sec.append(header);
+
+  const table = el('table', { class: 'cs-findings-table', 'data-survey': survey.id, 'data-category': category });
+  const thead = el('thead', {}, el('tr', {},
+    el('th', { style: 'width:50px' }, 'No'),
+    el('th', { class: 'cs-th-item' }, 'Item'),
+    el('th', { class: 'cs-th-desc' }, 'Description'),
+    el('th', { class: 'cs-th-remark' }, 'Remark'),
+    el('th', { style: 'width:90px; text-align:center' }, 'Status'),
+    el('th', { style: 'width:48px' }, ''),
+  ));
+  table.append(thead);
+
+  const tbody = el('tbody');
+  for (const f of findings) tbody.append(findingRow(survey, f));
+
+  // 인라인 추가 행들 (배열 형태) — 여러 빈 행 누적 가능
+  const isAdding = survey._inlineAdd && survey._inlineAdd.category === category;
+  if (isAdding) {
+    survey._inlineAdd.rows.forEach((row, idx) => {
+      tbody.append(inlineAddRow(survey, category, row, idx, findings.length));
+    });
+  }
+
+  table.append(tbody);
+  sec.append(el('div', { class: 'tbl-scroll' }, table));
+
+  // 버튼 영역 — + 추가 / 💾 저장 / 취소
+  const btnRow = el('div', { class: 'cs-add-btn-row' });
+  btnRow.append(el('button', {
+    class: 'btn btn-outline btn-sm',
+    onclick: () => addBlankRow(survey, category),
+  }, isAdding
+      ? `+ 빈 줄 추가  (엑셀 표 붙여넣기 가능)`
+      : `+ ${category} 항목 추가  (엑셀 표 붙여넣기 가능)`));
+
+  if (isAdding) {
+    btnRow.append(el('button', {
+      class: 'btn btn-primary btn-sm',
+      onclick: () => saveAllInlineRows(survey, category),
+    }, `💾 전체 저장`));
+    btnRow.append(el('button', {
+      class: 'btn btn-outline btn-sm',
+      onclick: () => { survey._inlineAdd = null; render(); },
+    }, `취소`));
+  }
+  sec.append(btnRow);
+
+  return sec;
+}
+
+function findingRow(survey, f) {
+  const tr = el('tr');
+  tr.append(el('td', { class: 'cs-no' }, String(f.no)));
+  tr.append(findingEditableCell(f, 'item', 'text', survey));
+  tr.append(findingEditableCell(f, 'description', 'text', survey));
+  tr.append(findingEditableCell(f, 'remark', 'text', survey));
+
+  // Status — 클릭 토글
+  const stTd = el('td', { class: 'cs-status', style: 'text-align:center' });
+  const stPill = el('span', {
+    class: 'bd ' + (f.status === 'Closed' ? 'status-done' : 'status-open'),
+    style: 'cursor:pointer',
+    title: '클릭으로 Open/Closed 토글',
+    onclick: () => toggleFindingStatus(f),
+  }, f.status);
+  stTd.append(stPill);
+  tr.append(stTd);
+
+  // 삭제
+  const acts = el('td', { class: 'cs-actions' });
+  const rm = el('button', {
+    class: 'icon-btn danger',
+    title: '항목 삭제',
+    onclick: () => deleteFinding(f),
+  });
+  rm.innerHTML = `<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+    <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`;
+  acts.append(rm);
+  tr.append(acts);
+  return tr;
+}
+
+function findingEditableCell(f, field, kind, survey) {
+  const td = el('td', { class: 'cs-edit-cell' });
+  const display = el('div', { class: 'cs-cell-display' }, f[field] || '–');
+  if (!f[field]) display.classList.add('placeholder');
+  td.append(display);
+
+  td.addEventListener('click', (e) => {
+    if (td._editing) return;
+    td._editing = true;
+    td.innerHTML = '';
+    const input = document.createElement(kind === 'textarea' ? 'textarea' : 'input');
+    if (kind !== 'textarea') input.type = 'text';
+    input.value = f[field] || '';
+    input.className = 'cs-inline-input';
+    td.append(input);
+    input.focus();
+    if (input.select) input.select();
+
+    let done = false;
+    const save = async () => {
+      if (done) return; done = true;
+      const newVal = input.value;
+      td._editing = false;
+      if (newVal === (f[field] || '')) {
+        td.innerHTML = ''; td.append(display);
+        return;
+      }
+      try {
+        await api(`/api/cs/findings/${f.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ [field]: newVal }),
+        });
+        f[field] = newVal;
+        await reloadData();
+      } catch (err) {
+        alert('저장 실패: ' + err.message);
+        td.innerHTML = ''; td.append(display);
+      }
+    };
+    input.addEventListener('blur', save);
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); save(); }
+      if (ev.key === 'Escape') {
+        done = true; td._editing = false;
+        td.innerHTML = ''; td.append(display);
+      }
+    });
+
+    // 멀티라인 붙여넣기 → 같은 카테고리 내 연속 항목 일괄 수정
+    input.addEventListener('paste', async (ev) => {
+      if (!survey) return;     // survey 없으면 일괄 수정 불가
+      const text = (ev.clipboardData || window.clipboardData).getData('text');
+      if (!text) return;
+      const isTabular = text.includes('\t') || /\r?\n/.test(text.trim());
+      if (!isTabular) return;  // 단일 행은 기본 동작
+
+      ev.preventDefault();
+      const rows = parseTSV(text);
+      if (rows.length <= 1) {
+        // 1행이면 그냥 첫 셀만 input에 채우기 (기본 텍스트 붙여넣기 동작)
+        input.value = rows.length ? rows[0][0] : text;
+        return;
+      }
+      // 여러 행 → 일괄 수정 모드
+      done = true; td._editing = false;
+      // 각 행에서 "현재 셀 컬럼만" 추출 (첫 번째 셀)
+      const values = rows.map(r => (r[0] !== undefined ? r[0].trim() : ''));
+      // input은 원래 표시로 복귀
+      td.innerHTML = ''; td.append(display);
+      await bulkUpdateFindings(survey, f, field, values);
+    });
+  });
+  return td;
+}
+
+// 같은 카테고리의 연속된 finding들에 같은 컬럼을 일괄 update
+async function bulkUpdateFindings(survey, startFinding, field, values) {
+  const sameCategory = (survey.findings || [])
+    .filter(x => x.category === startFinding.category)
+    .sort((a, b) => a.no - b.no);
+  const startIdx = sameCategory.findIndex(x => x.id === startFinding.id);
+  if (startIdx < 0) {
+    alert('대상 항목을 찾지 못했습니다.');
+    return;
+  }
+  const remaining = sameCategory.length - startIdx;
+  const willUpdate = Math.min(values.length, remaining);
+  const skipped = values.length - willUpdate;
+
+  const fieldLabel = { item: 'Item', description: 'Description', remark: 'Remark' }[field] || field;
+  const startNo = startFinding.no;
+  const endNo = sameCategory[startIdx + willUpdate - 1].no;
+
+  let msg = `${startFinding.category} ${startNo}번 ~ ${endNo}번 항목의 ${fieldLabel}을(를) 일괄 수정합니다.\n총 ${willUpdate}개 항목.`;
+  if (skipped > 0) {
+    msg += `\n\n주의: ${skipped}개 행은 대상 항목 부족으로 무시됩니다.`;
+  }
+  msg += '\n\n진행하시겠습니까?';
+  if (!confirm(msg)) return;
+
+  try {
+    const tasks = [];
+    for (let i = 0; i < willUpdate; i++) {
+      const target = sameCategory[startIdx + i];
+      tasks.push(api(`/api/cs/findings/${target.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ [field]: values[i] }),
+      }));
+    }
+    await Promise.all(tasks);
+    await reloadData();
+  } catch (err) {
+    alert('일괄 수정 중 오류: ' + err.message);
+    await reloadData();   // 일부만 적용된 상태도 화면에는 반영
+  }
+}
+
+async function toggleFindingStatus(f) {
+  const newSt = f.status === 'Closed' ? 'Open' : 'Closed';
+  try {
+    await api(`/api/cs/findings/${f.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status: newSt }),
+    });
+    await reloadData();
+  } catch (err) { alert('상태 변경 실패: ' + err.message); }
+}
+
+async function deleteFinding(f) {
+  if (!confirm(`${f.category} #${f.no} 을(를) 삭제하시겠습니까?`)) return;
+  try {
+    await api(`/api/cs/findings/${f.id}`, { method: 'DELETE' });
+    await reloadData();
+  } catch (err) { alert('삭제 실패: ' + err.message); }
+}
+
+// ───────────── 인라인 추가 + 엑셀 붙여넣기 ─────────────
+
+// 엑셀 클립보드 TSV 파서 — 셀 안의 줄바꿈("..."로 감싼 셀)을 보존
+// 입력: 'A\tB\nC\tD' 또는 '"긴\n내용"\tB\nC\tD' 같은 형태
+// 출력: [[셀,셀,...], [셀,셀,...], ...]
+function parseTSV(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let inQuotes = false;
+  let cellStart = true;     // 현재 셀이 비어있는 시작 시점인가
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {       // 이스케이프된 따옴표 ""
+          cell += '"';
+          i++;
+        } else {
+          inQuotes = false;              // 닫는 따옴표
+        }
+      } else {
+        cell += ch;                      // 줄바꿈 \n / 탭 \t / 캐리지 리턴 \r 모두 그대로
+      }
+      continue;
+    }
+    // 따옴표 밖
+    if (ch === '"' && cellStart) {
+      inQuotes = true;
+      cellStart = false;
+      continue;
+    }
+    if (ch === '\t') {
+      row.push(cell);
+      cell = '';
+      cellStart = true;
+      continue;
+    }
+    if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;     // \r\n 한 번에 처리
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+      cellStart = true;
+      continue;
+    }
+    cell += ch;
+    cellStart = false;
+  }
+  // 마지막 셀/행
+  if (cell !== '' || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  // 순수 빈 행 제거
+  return rows.filter(r => r.some(c => c !== ''));
+}
+
+// 빈 행 하나 추가 (이미 있으면 행 배열에 push, 없으면 새로 시작)
+function addBlankRow(survey, category) {
+  // 다른 survey의 inlineAdd는 닫기 (한 번에 하나만)
+  for (const item of S.data) {
+    for (const q of QUARTERS) {
+      const s = item.surveys[q];
+      if (s && s !== survey && s._inlineAdd) s._inlineAdd = null;
+    }
+  }
+  // 현재 survey가 다른 카테고리에서 추가 중이면 그것도 닫기
+  if (survey._inlineAdd && survey._inlineAdd.category !== category) {
+    survey._inlineAdd = null;
+  }
+  if (!survey._inlineAdd) {
+    survey._inlineAdd = { category, rows: [] };
+  }
+  survey._inlineAdd.rows.push({ item: '', description: '', remark: '', status: 'Open' });
+  render();
+
+  // 첫 빈 행의 첫 입력에 focus
+  setTimeout(() => {
+    const inputs = document.querySelectorAll('.cs-inline-add-row .cs-inline-input');
+    // 마지막에 추가된 행의 Item 입력칸에 focus (4 inputs/row)
+    const targetIdx = (survey._inlineAdd.rows.length - 1) * 4;
+    if (inputs[targetIdx]) inputs[targetIdx].focus();
+  }, 50);
+}
+
+// 빈 인라인 행 한 개 (행 배열의 idx 위치)
+function inlineAddRow(survey, category, row, idx, baseNo) {
+  const tr = el('tr', { class: 'cs-inline-add-row' });
+  tr.append(el('td', { class: 'cs-no' }, String(baseNo + idx + 1)));
+
+  const itemInput = el('input', {
+    type: 'text', class: 'cs-inline-input',
+    placeholder: 'Item', value: row.item || '',
+  });
+  const descInput = el('input', {
+    type: 'text', class: 'cs-inline-input',
+    placeholder: idx === 0 ? 'Description (엑셀 표 복사 후 Ctrl+V)' : 'Description',
+    value: row.description,
+  });
+  const remarkInput = el('input', {
+    type: 'text', class: 'cs-inline-input', placeholder: 'Remark', value: row.remark,
+  });
+  const statusSel = document.createElement('select');
+  statusSel.className = 'cs-inline-input';
+  for (const v of ['Open','Closed']) {
+    const o = document.createElement('option'); o.value = v; o.textContent = v;
+    if (v === row.status) o.selected = true;
+    statusSel.append(o);
+  }
+
+  // 상태 변경 → row 객체에 반영
+  itemInput.addEventListener('input',   () => { row.item        = itemInput.value; });
+  descInput.addEventListener('input',   () => { row.description = descInput.value; });
+  remarkInput.addEventListener('input', () => { row.remark      = remarkInput.value; });
+  statusSel.addEventListener('change',  () => { row.status      = statusSel.value; });
+
+  // 엑셀 붙여넣기 — 4컬럼 매핑 (Item/Desc/Remark/Status)
+  const onPaste = (ev) => {
+    const text = (ev.clipboardData || window.clipboardData).getData('text');
+    if (!text) return;
+    const isTabular = text.includes('\t') || /\r?\n/.test(text.trim());
+    if (!isTabular) return;
+
+    ev.preventDefault();
+    // 따옴표 인식하는 TSV 파서 사용 (셀 안의 줄바꿈 보존)
+    const rows = parseTSV(text);
+
+    rows.forEach((cols, k) => {
+      const targetIdx = idx + k;
+      while (survey._inlineAdd.rows.length <= targetIdx) {
+        survey._inlineAdd.rows.push({ item: '', description: '', remark: '', status: 'Open' });
+      }
+      const target = survey._inlineAdd.rows[targetIdx];
+      if (cols[0] !== undefined && cols[0] !== '') target.item        = cols[0].trim();
+      if (cols[1] !== undefined && cols[1] !== '') target.description = cols[1].trim();
+      if (cols[2] !== undefined && cols[2] !== '') target.remark      = cols[2].trim();
+      if (cols[3] !== undefined && cols[3] !== '') {
+        const st = cols[3].trim();
+        target.status = (st === 'Closed' || st.toLowerCase() === 'closed') ? 'Closed' : 'Open';
+      }
+    });
+    render();
+  };
+  itemInput.addEventListener('paste',   onPaste);
+  descInput.addEventListener('paste',   onPaste);
+  remarkInput.addEventListener('paste', onPaste);
+
+  // Enter는 다음 행 추가/이동, Escape는 취소
+  for (const inp of [itemInput, descInput, remarkInput]) {
+    inp.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && !ev.shiftKey) {
+        ev.preventDefault();
+        if (idx === survey._inlineAdd.rows.length - 1) {
+          addBlankRow(survey, category);
+        } else {
+          const inputs = document.querySelectorAll('.cs-inline-add-row .cs-inline-input');
+          // 4 inputs/row → 다음 행의 첫 input
+          const nextIdx = (idx + 1) * 4;
+          if (inputs[nextIdx]) inputs[nextIdx].focus();
+        }
+      }
+      if (ev.key === 'Escape') {
+        survey._inlineAdd = null;
+        render();
+      }
+    });
+  }
+
+  const td0 = el('td'); td0.append(itemInput);
+  const td1 = el('td'); td1.append(descInput);
+  const td2 = el('td'); td2.append(remarkInput);
+  const td3 = el('td', { style: 'text-align:center' }); td3.append(statusSel);
+  tr.append(td0, td1, td2, td3);
+
+  // 행 삭제 버튼
+  const acts = el('td', { class: 'cs-actions' });
+  const rm = el('button', {
+    class: 'icon-btn danger', title: '이 빈 줄 삭제',
+    onclick: () => {
+      survey._inlineAdd.rows.splice(idx, 1);
+      if (!survey._inlineAdd.rows.length) survey._inlineAdd = null;
+      render();
+    },
+  });
+  rm.innerHTML = `<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+    <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`;
+  acts.append(rm);
+  tr.append(acts);
+  return tr;
+}
+
+// 채워진 행만 골라서 한 번에 저장
+async function saveAllInlineRows(survey, category) {
+  if (!survey._inlineAdd) return;
+  const valid = survey._inlineAdd.rows
+    .filter(r => (r.item || '').trim() !== '' || (r.description || '').trim() !== '')
+    .map(r => ({
+      item:        (r.item || '').trim(),
+      description: (r.description || '').trim(),
+      remark:      (r.remark || '').trim(),
+      status:      r.status || 'Open',
+    }));
+  if (!valid.length) {
+    alert('저장할 항목이 없습니다. Item 또는 Description을 입력하세요.');
+    return;
+  }
+  try {
+    await api(`/api/cs/surveys/${survey.id}/findings`, {
+      method: 'POST',
+      body: JSON.stringify({ category, items: valid }),
+    });
+    survey._inlineAdd = null;
+    await reloadData();
+  } catch (err) { alert('저장 실패: ' + err.message); }
+}
+
+// ───────────── Survey 모달 (Overall Remark) ─────────────
+let _modalCtx = null;  // { vesselId, quarter, surveyId? }
+
+function openSurveyModal(vesselId, quarter, survey) {
+  _modalCtx = { vesselId, quarter, surveyId: survey?.id };
+  $('#cs-modal-title').textContent =
+    survey ? `분기 수검 정보 — ${quarter}Q (${S.year})` : `${quarter}Q 신규 수검`;
+  $('#cs-f-vendor').value = survey?.vendor || '';
+  $('#cs-f-mgmt').value   = survey?.management || '';
+  $('#cs-f-date').value   = survey?.inspection_date || '';
+  $('#cs-f-remark').value = survey?.overall_remark || '';
+  $('#cs-survey-modal').hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+
+function closeSurveyModal() {
+  $('#cs-survey-modal').hidden = true;
+  document.body.style.overflow = '';
+  _modalCtx = null;
+}
+
+async function saveSurveyModal() {
+  if (!_modalCtx) return;
+  const payload = {
+    vendor:          $('#cs-f-vendor').value || null,
+    management:      $('#cs-f-mgmt').value.trim() || null,
+    inspection_date: $('#cs-f-date').value || null,
+    overall_remark:  $('#cs-f-remark').value.trim() || null,
+  };
+  try {
+    if (_modalCtx.surveyId) {
+      await api(`/api/cs/surveys/${_modalCtx.surveyId}`, {
+        method: 'PUT', body: JSON.stringify(payload),
+      });
+    } else {
+      await api('/api/cs/surveys', {
+        method: 'POST',
+        body: JSON.stringify({
+          vessel_id: _modalCtx.vesselId,
+          year: S.year,
+          quarter: _modalCtx.quarter,
+          ...payload,
+        }),
+      });
+    }
+    closeSurveyModal();
+    await reloadData();
+  } catch (err) { alert('저장 실패: ' + err.message); }
+}
+
+async function deleteSurvey(survey) {
+  if (!confirm(`${survey.quarter}Q 수검 데이터를 삭제하시겠습니까?\n세부 항목 ${survey.total_count}건도 함께 삭제됩니다.`)) return;
+  try {
+    await api(`/api/cs/surveys/${survey.id}`, { method: 'DELETE' });
+    S.expandedSurveys.delete(survey.id);
+    await reloadData();
+  } catch (err) { alert('삭제 실패: ' + err.message); }
+}
+
+// ───────────── 캘린더(일정)에 등록 ─────────────
+async function addCsToCalendar(vesselId, quarter, survey) {
+  if (!survey.inspection_date) {
+    alert('Inspection Date가 설정되지 않았습니다.\n분기 행에서 검사일을 먼저 입력해주세요.');
+    return;
+  }
+
+  // 중복 체크
+  let existing = null;
+  try {
+    existing = await api(`/api/cal/events/find?source_type=cs&source_id=${survey.id}`);
+  } catch (_) {}
+
+  if (existing) {
+    if (confirm(
+        `이 분기 수검은 이미 일정에 등록되어 있습니다.\n\n` +
+        `제목: ${existing.title}\n날짜: ${existing.start_date}\n\n` +
+        `일정 페이지에서 확인/편집하시겠습니까?`
+    )) {
+      window.location.href = '/calendar';
+    }
+    return;
+  }
+
+  // 선박 정보 + 활성 감독
+  const item = S.data.find(x => x.vessel.id === vesselId);
+  const vesselName = item?.vessel?.name || '';
+  let supId = null;
+  if (S.activeTab !== 'all') supId = parseInt(S.activeTab);
+  if (!supId && S.user.supervisor_id) supId = S.user.supervisor_id;
+
+  const vendor = survey.vendor || '시행사 미정';
+  const title = `[${vesselName}] ${quarter}Q Condition Survey · ${vendor}`;
+
+  const summary =
+    `다음 정보로 일정에 등록합니다:\n\n` +
+    `  제목: ${title}\n` +
+    `  날짜: ${survey.inspection_date}\n` +
+    `  선박: ${vesselName}\n` +
+    `  카테고리: 검사  (색상: 보라)\n\n` +
+    `진행하시겠습니까? (저장 후 일정 페이지에서 추가 편집 가능)`;
+  if (!confirm(summary)) return;
+
+  try {
+    await api('/api/cal/events', {
+      method: 'POST',
+      body: JSON.stringify({
+        title,
+        start_date: survey.inspection_date,
+        all_day:    true,
+        supervisor_id: supId,
+        vessel_id:     vesselId,
+        category:   '검사',
+        color:      'purple',
+        notes:      survey.overall_remark || '',
+        source_type: 'cs',
+        source_id:   survey.id,
+      }),
+    });
+    if (confirm('일정에 등록되었습니다. 일정 페이지로 이동하시겠습니까?')) {
+      window.location.href = '/calendar';
+    }
+  } catch (err) {
+    alert('일정 등록 실패: ' + err.message);
+  }
+}
+
+// ───────────── Data Reload ─────────────
+async function reloadData() {
+  const url = `/api/cs/surveys?year=${S.year}` +
+              (S.activeTab !== 'all' ? `&supervisor_id=${S.activeTab}` : '');
+  let data = await api(url);
+  // 전체 탭에서는 숨김 감독 담당 vessel 제외
+  if (S.activeTab === 'all' && S.hiddenVesselIds.size) {
+    data = data.filter(item => !S.hiddenVesselIds.has(item.vessel.id));
+  }
+  S.data = data;
+  renderContext();
+  render();
+}
+
+// ───────────── 첨부 모달 (Daily 업무관리와 동일 패턴) ─────────────
+let _csAttachSurvey = null;
+
+async function openAttachModal(survey) {
+  _csAttachSurvey = survey;
+  $('#cs-attach-subtitle').textContent =
+    `· ${survey.year} ${survey.quarter}Q ${survey.vendor || ''}`;
+  await renderCsAttachGrid();
+  $('#cs-attach-modal').hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+
+async function closeAttachModal() {
+  $('#cs-attach-modal').hidden = true;
+  document.body.style.overflow = '';
+  _csAttachSurvey = null;
+  await reloadData();   // 카운트 뱃지 갱신
+}
+
+async function renderCsAttachGrid() {
+  const grid = $('#cs-attach-grid');
+  grid.innerHTML = '';
+  if (!_csAttachSurvey) return;
+  let items = [];
+  try {
+    items = await api(`/api/cs/surveys/${_csAttachSurvey.id}/attachments`);
+  } catch (_) {}
+  if (!items.length) {
+    grid.append(el('div', { class: 'attach-empty' },
+      '첨부 파일이 없습니다. 위 영역으로 파일을 드래그하거나 클릭해 업로드하세요.'));
+    return;
+  }
+  for (const a of items) grid.append(csAttachItemEl(a));
+}
+
+function csAttachItemEl(a) {
+  const item = el('div', { class: 'attach-item' });
+
+  const thumb = el('div', { class: 'attach-thumb' });
+  const isImg = /\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(a.filename);
+  const isPdf = /\.pdf$/i.test(a.filename);
+  if (isImg) {
+    thumb.append(el('img', {
+      src: `/api/cs/attachments/${a.id}?inline=1`,
+      alt: a.filename, loading: 'lazy',
+    }));
+  } else {
+    thumb.append(el('div', { class: 'attach-file-icon' },
+      isPdf ? 'PDF' : (a.filename.split('.').pop() || 'FILE').toUpperCase().slice(0, 4)));
+  }
+  item.append(thumb);
+
+  const meta = el('div', { class: 'attach-meta' },
+    el('a', {
+      href: `/api/cs/attachments/${a.id}` + (isImg || isPdf ? '?inline=1' : ''),
+      target: (isImg || isPdf) ? '_blank' : '_self',
+      class: 'attach-name',
+    }, a.filename),
+    el('span', { class: 'attach-size' }, formatFileSize(a.file_size)),
+  );
+  item.append(meta);
+
+  const rm = el('button', {
+    class: 'icon-btn danger attach-rm',
+    title: '삭제',
+    onclick: () => deleteCsAttach(a.id),
+  });
+  rm.innerHTML = `<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+    <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`;
+  item.append(rm);
+  return item;
+}
+
+function formatFileSize(b) {
+  if (!b) return '';
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(1) + ' MB';
+}
+
+async function uploadCsFiles(files) {
+  if (!_csAttachSurvey || !files || !files.length) return;
+  const sid = _csAttachSurvey.id;
+  for (const f of files) {
+    if (f.size > 20 * 1024 * 1024) {
+      alert(`"${f.name}" 은 20MB를 초과합니다.`);
+      continue;
+    }
+    const fd = new FormData();
+    fd.append('file', f);
+    try {
+      await api(`/api/cs/surveys/${sid}/attachments`, { method: 'POST', body: fd });
+    } catch (err) {
+      alert(`"${f.name}" 업로드 실패: ${err.message}`);
+    }
+  }
+  await renderCsAttachGrid();
+}
+
+async function deleteCsAttach(aid) {
+  if (!confirm('이 첨부파일을 삭제하시겠습니까?')) return;
+  try {
+    await api(`/api/cs/attachments/${aid}`, { method: 'DELETE' });
+    await renderCsAttachGrid();
+  } catch (err) { alert('삭제 실패: ' + err.message); }
+}
+
+// ───────────── Init ─────────────
+async function loadSupervisors() {
+  S.supervisors = await api('/api/supervisors');
+  // 숨김 감독이 담당하는 vessel ID 캐싱 (전체 탭에서 제외용)
+  S.hiddenVesselIds = new Set();
+  const hiddenSups = S.supervisors.filter(isHiddenSupervisor);
+  for (const sup of hiddenSups) {
+    try {
+      const vessels = await api(`/api/vessels?supervisor_id=${sup.id}`);
+      for (const v of vessels) S.hiddenVesselIds.add(v.id);
+    } catch (_) {}
+  }
+}
+
+(async function init() {
+  try {
+    await loadSupervisors();
+    // 손유석 단독 운영 — 항상 손유석 탭으로 고정
+    const onlySup = S.supervisors.find(s => (s.name || '').trim() === ONLY_SUP_CS);
+    if (onlySup) S.activeTab = onlySup.id;  // 미존재 시 'all' 유지(타 감독 scope 방지)
+    renderTabs();
+    $('#cs-year-label').textContent = S.year;
+    await reloadData();
+
+    // 이벤트
+    $('#cs-year-prev').addEventListener('click', async () => {
+      S.year--;
+      $('#cs-year-label').textContent = S.year;
+      S.expandedSurveys.clear();
+      await reloadData();
+    });
+    $('#cs-year-next').addEventListener('click', async () => {
+      S.year++;
+      $('#cs-year-label').textContent = S.year;
+      S.expandedSurveys.clear();
+      await reloadData();
+    });
+
+    // 검색 — 실시간 필터링 (재요청 없이 클라에서)
+    const searchInput = $('#cs-search');
+    const clearBtn = $('#cs-search-clear');
+    searchInput.addEventListener('input', (e) => {
+      S.search = e.target.value;
+      clearBtn.hidden = !S.search;
+      renderContext();
+      render();
+    });
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && S.search) {
+        S.search = '';
+        searchInput.value = '';
+        clearBtn.hidden = true;
+        renderContext();
+        render();
+      }
+    });
+    clearBtn.addEventListener('click', () => {
+      S.search = '';
+      searchInput.value = '';
+      clearBtn.hidden = true;
+      searchInput.focus();
+      renderContext();
+      render();
+    });
+
+    // 모달
+    $('#cs-survey-modal').addEventListener('click', (ev) => {
+      if (ev.target.dataset.closeCs === '1') closeSurveyModal();
+    });
+    $('#cs-btn-save').addEventListener('click', saveSurveyModal);
+
+    // 첨부 모달
+    $('#cs-attach-modal').addEventListener('click', (ev) => {
+      if (ev.target.dataset.closeCsa === '1') closeAttachModal();
+    });
+    // dropzone — 클릭으로 파일 선택
+    const dz = $('#cs-attach-dropzone');
+    const fi = $('#cs-attach-file-input');
+    dz.addEventListener('click', () => fi.click());
+    fi.addEventListener('change', () => {
+      uploadCsFiles(fi.files);
+      fi.value = '';
+    });
+    // 드래그 앤 드롭
+    dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('dragover'); });
+    dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+    dz.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dz.classList.remove('dragover');
+      uploadCsFiles(e.dataTransfer.files);
+    });
+
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') {
+        if (!$('#cs-attach-modal').hidden) closeAttachModal();
+        else if (!$('#cs-survey-modal').hidden) closeSurveyModal();
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    alert('초기 로드 실패: ' + err.message);
+  }
+})();
+
+// ════════════════════════════════════════════════════════════════
+//  보고서(PDF·이미지·엑셀) → Defect/Observation 항목 자동 생성
+//  · 업로드 → 서버(Gemini/엑셀파서) 추출 → 검토 목록 → 선택 추가
+// ════════════════════════════════════════════════════════════════
+const CSX = { surveyId: null, items: [], bound: false };
+
+function openCsExtract(survey) {
+  CSX.surveyId = survey.id;
+  CSX.items = [];
+  if (!CSX.bound) bindCsExtract();
+  $('#cs-extract-status').textContent = '';
+  $('#cs-extract-list').innerHTML = '';
+  $('#cs-extract-add').disabled = true;
+  $('#cs-extract-selall').checked = true;
+  $('#cs-extract-modal').hidden = false;
+  document.body.classList.add('modal-open');
+}
+function closeCsExtract() {
+  $('#cs-extract-modal').hidden = true;
+  document.body.classList.remove('modal-open');
+}
+
+function bindCsExtract() {
+  CSX.bound = true;
+  const fileInp = $('#cs-extract-file');
+  $('#cs-extract-pick').addEventListener('click', () => fileInp.click());
+  fileInp.addEventListener('change', async () => {
+    const f = fileInp.files && fileInp.files[0];
+    fileInp.value = '';
+    if (f) await runCsExtract(f);
+  });
+  const dz = $('#cs-extract-drop');
+  if (dz) {
+    dz.addEventListener('click', () => fileInp.click());
+    ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
+    ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
+    dz.addEventListener('drop', (e) => { const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) runCsExtract(f); });
+  }
+  $('#cs-extract-selall').addEventListener('change', (e) => {
+    document.querySelectorAll('#cs-extract-list .csx-chk').forEach(c => { c.checked = e.target.checked; });
+    updateCsxAddState();
+  });
+  $('#cs-extract-add').addEventListener('click', confirmCsExtract);
+  $('#cs-extract-modal').addEventListener('click', (ev) => {
+    if (ev.target.dataset && ev.target.dataset.csxClose === '1') closeCsExtract();
+  });
+}
+
+async function runCsExtract(file) {
+  $('#cs-extract-list').innerHTML = '';
+  $('#cs-extract-add').disabled = true;
+  $('#cs-extract-status').textContent = '분석 중... (파일 크기에 따라 수십 초 걸릴 수 있어요)';
+  const fd = new FormData(); fd.append('file', file);
+  let res;
+  try {
+    res = await api(`/api/cs/surveys/${CSX.surveyId}/extract-report`, { method: 'POST', body: fd });
+  } catch (e) {
+    $('#cs-extract-status').textContent = '실패: ' + e.message;
+    return;
+  }
+  if (!res.ok) { $('#cs-extract-status').textContent = res.message || '추출 실패'; return; }
+  CSX.items = res.items || [];
+  if (!CSX.items.length) {
+    $('#cs-extract-status').textContent = '추출된 항목이 없습니다. 다른 파일을 시도해 보세요.';
+    return;
+  }
+  $('#cs-extract-status').textContent = `${CSX.items.length}개 항목을 찾았습니다. 확인 후 추가하세요.`;
+  renderCsxList();
+}
+
+function renderCsxList() {
+  const wrap = $('#cs-extract-list'); wrap.innerHTML = '';
+  CSX.items.forEach((it, i) => {
+    const chk = el('input', { type: 'checkbox', class: 'csx-chk', checked: true });
+    chk.addEventListener('change', updateCsxAddState);
+    it._chk = chk;
+    const cat = el('select', { class: 'csx-cat' },
+      el('option', { value: 'Defect' }, 'Defect'),
+      el('option', { value: 'Observation' }, 'Observation'));
+    cat.value = it.category || 'Observation';
+    cat.addEventListener('change', () => { CSX.items[i].category = cat.value; });
+    const item = el('input', { class: 'csx-in', value: it.item || '', placeholder: '항목명' });
+    item.addEventListener('input', () => { CSX.items[i].item = item.value; });
+    const desc = el('textarea', { class: 'csx-ta', rows: 2, placeholder: '상세 내용' });
+    desc.value = it.description || '';
+    desc.addEventListener('input', () => { CSX.items[i].description = desc.value; });
+    const rem = el('textarea', { class: 'csx-ta', rows: 2, placeholder: '비고 (Description 한글 번역)' });
+    rem.value = it.remark || '';
+    rem.addEventListener('input', () => { CSX.items[i].remark = rem.value; });
+    wrap.append(el('div', { class: 'csx-row' },
+      el('div', { class: 'csx-row-top' }, chk, cat, item),
+      desc,
+      el('div', { class: 'csx-row-rem' }, el('span', { class: 'csx-rem-label' }, 'Remark'), rem),
+    ));
+  });
+  updateCsxAddState();
+}
+
+function updateCsxAddState() {
+  const n = document.querySelectorAll('#cs-extract-list .csx-chk:checked').length;
+  const btn = $('#cs-extract-add');
+  btn.disabled = n === 0;
+  btn.textContent = n ? `선택 항목 추가 (${n})` : '선택 항목 추가';
+}
+
+async function confirmCsExtract() {
+  const chosen = CSX.items.filter(it => it._chk && it._chk.checked);
+  if (!chosen.length) return;
+  const groups = { Defect: [], Observation: [] };
+  chosen.forEach(it => {
+    const cat = (it.category === 'Defect') ? 'Defect' : 'Observation';
+    groups[cat].push({ item: it.item || '', description: it.description || '', remark: it.remark || '', status: 'Open' });
+  });
+  $('#cs-extract-add').disabled = true;
+  $('#cs-extract-status').textContent = '추가 중...';
+  try {
+    for (const cat of ['Defect', 'Observation']) {
+      if (groups[cat].length)
+        await api(`/api/cs/surveys/${CSX.surveyId}/findings`, {
+          method: 'POST', body: JSON.stringify({ category: cat, items: groups[cat] }),
+        });
+    }
+  } catch (e) {
+    $('#cs-extract-status').textContent = '추가 실패: ' + e.message;
+    return;
+  }
+  closeCsExtract();
+  await reloadData();
+}

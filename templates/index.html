@@ -1,0 +1,377 @@
+{% extends 'base.html' %}
+{% block title %}Daily 업무관리 · TRMT3{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Daily 업무관리</h1>
+  <div class="page-actions">
+    <button id="btn-new-issue" class="btn btn-primary">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+      신규 이슈
+    </button>
+  </div>
+</div>
+
+<!-- 감독 탭 바 -->
+<div class="tab-bar" id="tab-bar"></div>
+
+<!-- 서브 탭 (진행중 / 완료) -->
+<div class="subtab-bar" id="subtab-bar"></div>
+
+<!-- 탭 컨텍스트 (담당 선박 / 카운트 요약) -->
+<div class="tab-context" id="tab-context"></div>
+
+<!-- 필터 툴바 -->
+<div class="toolbar">
+  <button class="btn btn-outline btn-sm" id="btn-today">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="4" width="18" height="18" rx="2"/>
+      <line x1="16" y1="2" x2="16" y2="6"/>
+      <line x1="8" y1="2" x2="8" y2="6"/>
+      <line x1="3" y1="10" x2="21" y2="10"/>
+    </svg>
+    <span>Today</span>
+  </button>
+
+  <button class="btn btn-outline btn-sm" id="btn-toggle-all" title="전체 펼치기/접기">
+    <span id="toggle-all-icon">▼</span>
+    <span id="toggle-all-label">전체 접기</span>
+  </button>
+
+  <input type="text" class="input search-input" id="filter-search"
+         placeholder="제목, 상세, 조치 검색...">
+
+  <select class="select" id="filter-vessel">
+    <option value="">All 선박</option>
+  </select>
+
+  <select class="select" id="filter-vessel-type">
+    <option value="">All 선종</option>
+    <option value="CNTR">CNTR</option>
+    <option value="VLCC">VLCC</option>
+    <option value="AFRAMAX">AFRAMAX</option>
+    <option value="MR">MR</option>
+    <option value="LR">LR</option>
+  </select>
+
+  <select class="select" id="filter-status">
+    <option value="">All Status</option>
+    <option value="Open">Open</option>
+    <option value="InProgress">진행중</option>
+    <option value="Closed">Closed</option>
+  </select>
+
+  <select class="select" id="filter-priority">
+    <option value="">All Priority</option>
+    <option value="COC &amp; Flag">COC &amp; Flag</option>
+    <option value="Urgent">Urgent</option>
+    <option value="Next DD">Next DD</option>
+    <option value="Normal">Normal</option>
+  </select>
+
+  <button class="btn btn-outline btn-sm" id="btn-export-xlsx" title="현재 필터된 결과를 Excel로 추출">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="7 10 12 15 17 10"/>
+      <line x1="12" y1="15" x2="12" y2="3"/>
+    </svg>
+    <span>엑셀 추출</span>
+  </button>
+  <button class="btn btn-outline btn-sm" id="btn-export-xlsx-en" title="현재 필터된 결과를 영문 번역하여 Excel로 추출">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="7 10 12 15 17 10"/>
+      <line x1="12" y1="15" x2="12" y2="3"/>
+    </svg>
+    <span>영문 엑셀 추출</span>
+  </button>
+  <button class="btn btn-outline btn-sm" id="btn-export-summary" title="현재 필터된 결과를 한글로 요약하여 Excel로 추출">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>
+      <line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/>
+      <line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+    </svg>
+    <span>업무 요약 추출</span>
+  </button>
+  <button class="btn btn-outline btn-sm" id="btn-summary-gen" title="현재 탭의 전체(진행중+완료)를 한글 요약하여 '요약' 탭에 갱신">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 12a9 9 0 11-3-6.7L21 7"/><polyline points="21 3 21 7 17 7"/>
+    </svg>
+    <span>업무 요약</span>
+  </button>
+
+  <span class="count-label" id="count-label"></span>
+</div>
+
+<!-- 업무 요약 뷰 (요약 서브탭 전용) -->
+<div class="grid-wrap" id="summary-wrap" hidden>
+  <div id="summary-meta" style="padding:8px 4px;color:#666;font-size:12.5px;"></div>
+  <table class="ex-table" id="summary-table">
+    <colgroup>
+      <col style="width:48px"><col style="width:160px"><col>
+      <col style="width:110px"><col style="width:90px"><col style="width:56px">
+    </colgroup>
+    <thead>
+      <tr><th>No.</th><th>Vessel Name</th><th>현안업무</th><th>Priority</th><th>Status</th><th>링크</th></tr>
+    </thead>
+    <tbody id="summary-tbody"></tbody>
+  </table>
+  <div id="summary-empty" style="padding:24px;text-align:center;color:#888;" hidden>
+    아직 요약이 없습니다. 상단 <strong>"업무 요약"</strong> 버튼을 눌러 생성하세요.
+  </div>
+</div>
+
+<!-- 선박별 2단 레이아웃 (사이드바 + 메인) -->
+<div class="daily-body" id="daily-body">
+  <!-- 좌측: 선박 사이드바 (JS 렌더) -->
+  <aside class="vessel-sidebar" id="vessel-sidebar"></aside>
+
+  <!-- 우측: 선택 선박 메인 -->
+  <div class="daily-main">
+    <!-- 선택 선박 헤더 + 빠른필터 + 정렬토글 (JS 렌더) -->
+    <div class="vmain-head" id="vmain-head"></div>
+
+    <!-- 데스크톱: 테이블 -->
+    <div class="grid-wrap" id="table-wrap">
+      <table class="ex-table" id="issue-table">
+        <colgroup>
+          <col class="c-no">
+          <col class="c-date">
+          <col class="c-topic">
+          <col class="c-pri">
+          <col class="c-stat">
+        </colgroup>
+        <thead>
+          <tr>
+            <th>NO.</th>
+            <th>발생일</th>
+            <th>현안업무</th>
+            <th>PRIORITY</th>
+            <th>STATUS</th>
+          </tr>
+        </thead>
+        <tbody id="issue-tbody"></tbody>
+      </table>
+    </div>
+
+    <!-- 모바일: 카드 리스트 -->
+    <div class="card-list" id="card-list"></div>
+
+    <!-- 빈 상태 -->
+    <div class="empty-state" id="empty-state" hidden>
+      <p>조건에 맞는 이슈가 없습니다.</p>
+      <p class="empty-sub">+ 신규 이슈 버튼으로 첫 이슈를 등록하세요.</p>
+    </div>
+  </div>
+</div>
+
+<!-- 하단 요약 -->
+<div class="summary-row" id="summary-row"></div>
+
+
+<!-- ========= 이슈 등록/수정 모달 ========= -->
+<div class="modal" id="issue-modal" hidden>
+  <div class="modal-backdrop" data-close="1"></div>
+  <div class="modal-box" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2 id="modal-title">신규 이슈</h2>
+      <button class="modal-close" data-close="1" aria-label="닫기">×</button>
+    </div>
+
+    <form id="issue-form" class="modal-body">
+      <input type="hidden" id="f-id">
+
+      <div class="form-grid">
+        <label class="form-field">
+          <span class="form-label">감독</span>
+          <select id="f-supervisor" required></select>
+        </label>
+        <label class="form-field">
+          <span class="form-label">선박</span>
+          <select id="f-vessel" required></select>
+        </label>
+        <label class="form-field">
+          <span class="form-label">작성일</span>
+          <input type="date" id="f-issue-date" required>
+        </label>
+        <label class="form-field">
+          <span class="form-label">마감일</span>
+          <input type="date" id="f-due-date">
+        </label>
+        <label class="form-field">
+          <span class="form-label">우선순위</span>
+          <select id="f-priority">
+            <option value="Normal">Normal</option>
+            <option value="Urgent">Urgent</option>
+            <option value="Next DD">Next DD</option>
+            <option value="COC &amp; Flag">COC &amp; Flag</option>
+          </select>
+        </label>
+        <label class="form-field">
+          <span class="form-label">상태</span>
+          <select id="f-status">
+            <option value="Open">Open</option>
+            <option value="InProgress">진행중</option>
+            <option value="Closed">Closed</option>
+          </select>
+        </label>
+      </div>
+
+      <label class="form-field">
+        <span class="form-label">제목 / 이슈 <em>*</em></span>
+        <input type="text" id="f-topic" required maxlength="200">
+      </label>
+
+      <label class="form-field">
+        <span class="form-label">상세 내용</span>
+        <textarea id="f-desc" rows="5"
+                  placeholder="1. &#10;2. &#10;3. "></textarea>
+      </label>
+
+      <!-- Action Entries Editor (DD Manager 스타일) -->
+      <div class="form-field">
+        <div class="action-label-row">
+          <span class="form-label">조치 / 팔로우업 <em class="hint">(여러 건 가능)</em></span>
+          <button type="button" class="btn-add-action" id="btn-add-action">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            엔트리 추가
+          </button>
+        </div>
+        <div class="action-editor" id="f-action-editor"></div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" id="btn-delete" class="btn btn-danger" hidden>삭제</button>
+        <div class="footer-right">
+          <button type="button" data-close="1" class="btn btn-outline">취소</button>
+          <button type="submit" class="btn btn-primary" id="btn-save">저장</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ========= 첨부 관리 모달 ========= -->
+<div class="modal" id="attach-modal" hidden>
+  <div class="modal-backdrop" data-close-attach="1"></div>
+  <div class="modal-box attach-modal-box" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>
+        첨부 파일
+        <span class="attach-modal-subtitle">
+          · 이슈 #<span id="attach-issue-id"></span> ·
+          <span id="attach-issue-topic"></span>
+        </span>
+      </h2>
+      <button class="modal-close" data-close-attach="1" aria-label="닫기">×</button>
+    </div>
+
+    <div class="modal-body">
+      <!-- Drop zone -->
+      <div class="attach-dropzone" id="attach-dropzone">
+        <input type="file" id="attach-file-input" multiple hidden
+               accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv">
+        <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <p class="attach-dropzone-title">파일을 끌어다 놓거나 클릭하여 선택하세요</p>
+        <p class="attach-dropzone-sub">이미지 · PDF · 문서 (최대 20MB)</p>
+      </div>
+
+      <!-- Uploaded grid -->
+      <div class="attach-grid" id="attach-grid"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ========= 담당 선박 모달 (감독 탭 전용) ========= -->
+<div class="modal" id="myves-modal" hidden>
+  <div class="modal-backdrop" data-close-myves="1"></div>
+  <div class="modal-box" style="width: min(680px, 94vw);" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2 id="myves-title">담당 선박</h2>
+      <button class="modal-close" data-close-myves="1">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="admin-list" id="myves-list" style="max-height: 360px;"></div>
+
+      <div class="admin-add-form" id="myves-add-form" style="margin-top: 16px;" hidden>
+        <h3>+ 새 선박 추가 <span style="font-weight:400; text-transform:none; letter-spacing:0; color:var(--text-tertiary); font-size:11px">(현재 감독을 담당자로 자동 연결)</span></h3>
+        <div class="admin-form-grid">
+          <label class="form-field">
+            <span class="form-label">선종 <em>*</em></span>
+            <select id="myves-add-type">
+              <option value="CNTR">CNTR (컨테이너)</option>
+              <option value="VLCC" selected>VLCC</option>
+              <option value="AFRAMAX">AFRAMAX</option>
+              <option value="MR">MR</option>
+              <option value="LR">LR</option>
+            </select>
+          </label>
+          <label class="form-field">
+            <span class="form-label">선박명 <em>*</em></span>
+            <input type="text" id="myves-add-name" placeholder="예: KUWAIT HARMONY">
+          </label>
+          <label class="form-field">
+            <span class="form-label">약칭</span>
+            <input type="text" id="myves-add-short" placeholder="예: KW HARM">
+          </label>
+          <label class="form-field">
+            <span class="form-label">IMO</span>
+            <input type="text" id="myves-add-imo">
+          </label>
+          <label class="form-field">
+            <span class="form-label">선급</span>
+            <input type="text" id="myves-add-class" placeholder="BV / DNV / ABS">
+          </label>
+          <label class="form-field">
+            <span class="form-label">관리사</span>
+            <input type="text" id="myves-add-manager" placeholder="예: Sinokor / CSM">
+          </label>
+        </div>
+        <div class="admin-btn-row">
+          <button type="button" class="btn btn-primary" id="btn-myves-add">+ 선박 추가</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* Fleet Map 카드(현재 이슈 / Urgent) 클릭 → 좌측 선박 사이드바에서 그 선박 선택 + (Urgent면 COC·Urgent 칩) */
+(function(){
+  var p=new URLSearchParams(location.search), v=p.get('vessel'),
+      wantRisk=/urgent|coc/i.test(p.get('priority')||'');
+  if(!v && !wantRisk) return;
+  var nv=(v||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+  var doneV=!v, doneR=!wantRisk, c=0;
+  var t=setInterval(function(){
+    if(!doneV){
+      var items=document.querySelectorAll('#vsb-list .vsb-item');
+      for(var i=0;i<items.length;i++){
+        var nm=items[i].querySelector('.vsb-nm');
+        if(nm && nm.textContent.toLowerCase().replace(/[^a-z0-9]/g,'')===nv){
+          if(!items[i].classList.contains('active')) items[i].click();
+          doneV=true; break;
+        }
+      }
+    }
+    if(doneV && !doneR){
+      var chip=document.querySelector('.qchip.risk');
+      if(chip){ if(!chip.classList.contains('on')) chip.click(); doneR=true; }
+    }
+    if((doneV&&doneR) || ++c>=25) clearInterval(t);
+  },300);
+})();
+</script>
+{% endblock %}

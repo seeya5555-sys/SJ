@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#1E293B">
+  <title>{% block title %}TRMT3{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+{# ═══ 공용 SVG 아이콘 스프라이트 (Lucide 스타일 · 24×24 · stroke 1.75 · currentColor) ═══ #}
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-dashboard" viewBox="0 0 24 24">
+      <rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>
+      <rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>
+    </symbol>
+    <symbol id="i-clipboard" viewBox="0 0 24 24">
+      <rect x="8" y="2" width="8" height="4" rx="1"/>
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+      <path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/>
+    </symbol>
+    <symbol id="i-workflow" viewBox="0 0 24 24">
+      <rect x="3" y="3" width="8" height="8" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/>
+      <rect x="13" y="13" width="8" height="8" rx="2"/>
+    </symbol>
+    <symbol id="i-search-check" viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/><path d="m8 11 2 2 4-4"/>
+    </symbol>
+    <symbol id="i-file-text" viewBox="0 0 24 24">
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/>
+      <path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>
+    </symbol>
+    <symbol id="i-anchor" viewBox="0 0 24 24">
+      <circle cx="12" cy="5" r="3"/><path d="M12 22V8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/>
+    </symbol>
+    <symbol id="i-book-open" viewBox="0 0 24 24">
+      <path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z"/>
+      <path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/>
+    </symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24">
+      <path d="M8 2v4"/><path d="M16 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18"/>
+    </symbol>
+    <symbol id="i-wallet" viewBox="0 0 24 24">
+      <path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2H5"/>
+      <path d="M17 13.5h.01"/>
+    </symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>
+    </symbol>
+  </defs>
+</svg>
+{% block body %}
+  {% block nav %}
+  <header class="topnav">
+    <div class="topnav-inner">
+      <a class="brand" href="{{ url_for('dashboard') }}">
+        <span class="brand-mark">T3</span>
+        <span class="brand-text">
+          <span class="brand-name">TRMT3</span>
+          <span class="brand-sub">Tanker Management Team 3</span>
+        </span>
+      </a>
+
+      {% set survey_eps = ['class_status_page','vetting_status'] %}
+      {# 한 곳에서 active 판정 — 데스크탑/모바일 공통. icon 지정 시 스프라이트 SVG 출력 #}
+      {% macro nlink(ep, label, eps=None, icon=None) -%}
+        <a href="{{ url_for(ep) }}" class="nav-link {% if request.endpoint == ep or (eps and request.endpoint in eps) %}active{% endif %}">{% if icon %}<svg class="nav-ic" aria-hidden="true"><use href="#i-{{ icon }}"/></svg>{% endif %}{{ label }}</a>
+      {%- endmacro %}
+      <nav class="main-nav">
+        {{ nlink('dashboard', '대시보드', icon='dashboard') }}
+        {{ nlink('index', 'Daily 업무관리', icon='clipboard') }}
+
+        <div class="nav-group {% if request.endpoint in survey_eps %}active{% endif %}">
+          <button type="button" class="nav-trigger"><svg class="nav-ic" aria-hidden="true"><use href="#i-search-check"/></svg>Survey<svg class="nav-ic caret-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></button>
+          <div class="nav-submenu">
+            {{ nlink('class_status_page', 'Class Status') }}
+            {{ nlink('vetting_status', 'Vetting Status') }}
+          </div>
+        </div>
+
+        {{ nlink('calendar_page', 'Calendar', icon='calendar') }}
+      </nav>
+
+      <button type="button" class="nav-burger" id="nav-burger" aria-label="메뉴 열기" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+
+      <div class="user-menu">
+        <button class="manual-trigger" id="btn-page-manual" type="button" title="현재 탭 설명서">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z"/>
+            <path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/>
+          </svg>
+          <span class="trig-label">설명서</span>
+        </button>
+        {% if session.role == 'admin' %}
+        <button class="admin-trigger" id="btn-open-admin" title="감독/선박/사용자 관리">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+          </svg>
+          <span class="trig-label">관리</span>
+        </button>
+        {% endif %}
+        <button class="user-menu-trigger" id="user-menu-trigger">
+          <span class="user-name">{{ session.display_name or session.username }}</span>
+          <span class="caret">▼</span>
+        </button>
+        <div class="user-dropdown" id="user-dropdown" hidden>
+          <button type="button" class="dropdown-item" id="btn-change-password">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2"/>
+              <path d="M7 11V7a5 5 0 0110 0v4"/>
+            </svg>
+            비밀번호 변경
+          </button>
+          <div class="dropdown-sep"></div>
+          <a class="dropdown-item danger" href="{{ url_for('logout') }}">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+            로그아웃
+          </a>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="mobile-menu" id="mobile-menu" hidden>
+    <div class="mm-backdrop" id="mm-backdrop"></div>
+    <nav class="mm-panel">
+      {# 드로어 헤더 — 닫기 버튼은 nav-link 클래스로 기존 '링크 클릭 시 닫기' 핸들러 재사용(JS 무변경) #}
+      <div class="mm-head">
+        <span class="mm-mark">T3</span>
+        <span class="mm-brand"><b>TRMT3</b><span>Tanker Management Team 3</span></span>
+        <button type="button" class="nav-link mm-close" aria-label="메뉴 닫기"><svg class="nav-ic" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="mm-body">
+        {{ nlink('dashboard', '대시보드', icon='dashboard') }}
+        {{ nlink('index', 'Daily 업무관리', icon='clipboard') }}
+        <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-search-check"/></svg>Survey</div>
+        <div class="mm-sub-group">
+          {{ nlink('class_status_page', 'Class Status') }}
+          {{ nlink('vetting_status', 'Vetting Status') }}
+        </div>
+        <div class="mm-section"></div>
+        <button type="button" class="mm-manual" id="btn-page-manual-mobile"><svg class="nav-ic" aria-hidden="true"><use href="#i-book-open"/></svg>현재 탭 설명서</button>
+        {{ nlink('calendar_page', 'Calendar', icon='calendar') }}
+      </div>
+      {# 드로어 푸터 — 모바일에서 사용자 확인·로그아웃 접근성 확보 #}
+      <div class="mm-foot">
+        <span class="mm-avatar">{{ (session.display_name or session.username or '?')[:1] }}</span>
+        <span class="mm-user"><b>{{ session.display_name or session.username }}</b><span>{{ session.role }}</span></span>
+        <a class="mm-logout" href="{{ url_for('logout') }}"><svg class="nav-ic" aria-hidden="true"><use href="#i-logout"/></svg>로그아웃</a>
+      </div>
+    </nav>
+  </div>
+  {% endblock %}
+
+  {# 공용 모달(선박/감독/사용자 편집·비번변경·관리) — 모든 페이지 #}
+{# 선박 편집 모달은 admin + member 공통 (버튼 자체를 권한별로 표시/숨김 처리) #}
+<!-- ========= 선박 편집 모달 ========= -->
+<div class="modal" id="vessel-edit-modal" hidden>
+  <div class="modal-backdrop" data-close-vesedit="1"></div>
+  <div class="modal-box" style="width: min(540px, 94vw);" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>선박 편집</h2>
+      <button class="modal-close" data-close-vesedit="1">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="admin-form-grid">
+        <label class="form-field">
+          <span class="form-label">선종 <em>*</em></span>
+          <select id="vedit-type">
+            <option value="CNTR">CNTR (컨테이너)</option>
+            <option value="VLCC">VLCC</option>
+            <option value="AFRAMAX">AFRAMAX</option>
+            <option value="MR">MR</option>
+            <option value="LR">LR</option>
+          </select>
+        </label>
+        <label class="form-field">
+          <span class="form-label">선박명 <em>*</em></span>
+          <input type="text" id="vedit-name">
+        </label>
+        <label class="form-field">
+          <span class="form-label">약칭</span>
+          <input type="text" id="vedit-short">
+        </label>
+        <label class="form-field">
+          <span class="form-label">IMO</span>
+          <input type="text" id="vedit-imo">
+        </label>
+        <label class="form-field">
+          <span class="form-label">선급</span>
+          <input type="text" id="vedit-class">
+        </label>
+        <label class="form-field">
+          <span class="form-label">관리사</span>
+          <input type="text" id="vedit-manager" placeholder="예) Sinokor / CSM / Anglo-Eastern">
+        </label>
+        <div class="form-field full">
+          <span class="form-label">담당 감독 <em>*</em> <em class="hint">(복수 선택 가능)</em></span>
+          <div class="admin-chip-group" id="vedit-sups"></div>
+        </div>
+      </div>
+      <div class="admin-btn-row">
+        <button type="button" class="btn btn-outline" data-close-vesedit="1">취소</button>
+        <button type="button" class="btn btn-primary" id="btn-vedit-save">저장</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if session.role == 'admin' %}
+<!-- ========= 감독 편집 모달 (admin 전용) ========= -->
+<div class="modal" id="supervisor-edit-modal" hidden>
+  <div class="modal-backdrop" data-close-supedit="1"></div>
+  <div class="modal-box" style="width: min(460px, 94vw);" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>감독 편집</h2>
+      <button class="modal-close" data-close-supedit="1">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="admin-form-grid">
+        <label class="form-field">
+          <span class="form-label">이름 <em>*</em></span>
+          <input type="text" id="sedit-name">
+        </label>
+        <label class="form-field">
+          <span class="form-label">이메일</span>
+          <input type="text" id="sedit-email">
+        </label>
+        <div class="form-field full">
+          <span class="form-label">색상</span>
+          <div class="color-swatches" id="sedit-colors">
+            <span class="color-swatch" data-color="blue"></span>
+            <span class="color-swatch" data-color="teal"></span>
+            <span class="color-swatch" data-color="purple"></span>
+            <span class="color-swatch" data-color="coral"></span>
+            <span class="color-swatch" data-color="amber"></span>
+            <span class="color-swatch" data-color="gray"></span>
+          </div>
+        </div>
+      </div>
+      <div class="admin-btn-row">
+        <button type="button" class="btn btn-outline" data-close-supedit="1">취소</button>
+        <button type="button" class="btn btn-primary" id="btn-sedit-save">저장</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========= 사용자 편집 모달 (admin 전용) ========= -->
+<div class="modal" id="user-edit-modal" hidden>
+  <div class="modal-backdrop" data-close-useredit="1"></div>
+  <div class="modal-box" style="width: min(460px, 94vw);" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>사용자 편집</h2>
+      <button class="modal-close" data-close-useredit="1">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="admin-form-grid">
+        <label class="form-field">
+          <span class="form-label">사용자명(ID) <em class="hint">(변경 불가)</em></span>
+          <input type="text" id="uedit-username" disabled>
+        </label>
+        <label class="form-field">
+          <span class="form-label">표시 이름</span>
+          <input type="text" id="uedit-display">
+        </label>
+        <label class="form-field">
+          <span class="form-label">권한</span>
+          <select id="uedit-role">
+            <option value="member">일반 사용자</option>
+            <option value="admin">관리자</option>
+          </select>
+        </label>
+        <label class="form-field">
+          <span class="form-label">상태</span>
+          <select id="uedit-active">
+            <option value="1">활성</option>
+            <option value="0">비활성</option>
+          </select>
+        </label>
+        <label class="form-field full">
+          <span class="form-label">연결 감독</span>
+          <select id="uedit-supervisor">
+            <option value="">(연결 없음)</option>
+          </select>
+        </label>
+      </div>
+      <div class="admin-btn-row">
+        <button type="button" class="btn btn-outline" data-close-useredit="1">취소</button>
+        <button type="button" class="btn btn-primary" id="btn-uedit-save">저장</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ========= 비밀번호 변경 모달 (모든 사용자) ========= -->
+<div class="modal" id="password-modal" hidden>
+  <div class="modal-backdrop" data-close-pw="1"></div>
+  <div class="modal-box" style="width: min(420px, 94vw);" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>비밀번호 변경</h2>
+      <button class="modal-close" data-close-pw="1">×</button>
+    </div>
+    <form id="password-form" class="modal-body">
+      <label class="form-field">
+        <span class="form-label">현재 비밀번호</span>
+        <input type="password" id="pw-old" required autocomplete="current-password">
+      </label>
+      <label class="form-field">
+        <span class="form-label">새 비밀번호 <em class="hint">(6자 이상)</em></span>
+        <input type="password" id="pw-new" required minlength="6" autocomplete="new-password">
+      </label>
+      <label class="form-field">
+        <span class="form-label">새 비밀번호 확인</span>
+        <input type="password" id="pw-new2" required minlength="6" autocomplete="new-password">
+      </label>
+      <div class="modal-footer">
+        <div class="footer-right">
+          <button type="button" data-close-pw="1" class="btn btn-outline">취소</button>
+          <button type="submit" class="btn btn-primary">변경</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if session.role == 'admin' %}
+<!-- ========= Admin 관리 모달 (감독 / 선박 / 사용자) ========= -->
+<div class="modal" id="admin-modal" hidden>
+  <div class="modal-backdrop" data-close-admin="1"></div>
+  <div class="modal-box admin-modal-box" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>관리</h2>
+      <button class="modal-close" data-close-admin="1">×</button>
+    </div>
+    <div class="admin-tabs">
+      <div class="admin-tab active" data-admin-tab="supervisors">감독</div>
+      <div class="admin-tab" data-admin-tab="vessels">선박</div>
+      <div class="admin-tab" data-admin-tab="users">사용자</div>
+    </div>
+
+    <div class="modal-body">
+      <!-- 감독 패널 -->
+      <div class="admin-panel active" data-admin-panel="supervisors">
+        <div class="admin-list" id="admin-sup-list"></div>
+        <div class="admin-add-form">
+          <h3>새 감독 추가</h3>
+          <div class="admin-form-grid">
+            <label class="form-field">
+              <span class="form-label">이름 <em>*</em></span>
+              <input type="text" id="sup-add-name" placeholder="예: 박차장">
+            </label>
+            <label class="form-field">
+              <span class="form-label">이메일</span>
+              <input type="text" id="sup-add-email" placeholder="sample@sinokor.co.kr">
+            </label>
+            <div class="form-field full">
+              <span class="form-label">색상</span>
+              <div class="color-swatches" id="sup-add-colors">
+                <span class="color-swatch selected" data-color="blue"></span>
+                <span class="color-swatch" data-color="teal"></span>
+                <span class="color-swatch" data-color="purple"></span>
+                <span class="color-swatch" data-color="coral"></span>
+                <span class="color-swatch" data-color="amber"></span>
+                <span class="color-swatch" data-color="gray"></span>
+              </div>
+            </div>
+          </div>
+          <div class="admin-btn-row">
+            <button type="button" class="btn btn-primary" id="btn-sup-add">+ 감독 추가</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 선박 패널 -->
+      <div class="admin-panel" data-admin-panel="vessels">
+        <!-- 온디맨드 로스터 동기화 (선박 추가/삭제 후 1회 클릭 → ~1분 내 전 자동화 연동) -->
+        <div class="admin-add-form" id="roster-sync-box"
+             style="margin-bottom:12px;background:var(--surface-2);border:1px solid var(--border-subtle)">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <div>
+              <h3 style="margin:0 0 2px">자동화 연동</h3>
+              <div class="item-sub" id="roster-sync-status" style="color:var(--text-secondary)">
+                선박을 추가/삭제한 뒤 눌러 지도·선급 등 자동화를 즉시 갱신합니다.
+              </div>
+            </div>
+            <button type="button" class="btn btn-primary" id="btn-roster-sync">선박 로스터 동기화</button>
+          </div>
+          <div id="roster-sync-banner" role="status" aria-live="polite"
+               style="display:none;margin-top:10px;padding:8px 12px;border-radius:8px;
+                      font-size:13px;line-height:1.4;border:1px solid transparent"></div>
+        </div>
+        <div class="admin-list" id="admin-ves-list"></div>
+        <div class="admin-add-form">
+          <h3>새 선박 추가</h3>
+          <div class="admin-form-grid">
+            <label class="form-field">
+              <span class="form-label">선종 <em>*</em></span>
+              <select id="ves-add-type">
+                <option value="CNTR">CNTR (컨테이너)</option>
+                <option value="VLCC" selected>VLCC</option>
+                <option value="AFRAMAX">AFRAMAX</option>
+                <option value="MR">MR</option>
+                <option value="LR">LR</option>
+              </select>
+            </label>
+            <label class="form-field">
+              <span class="form-label">선박명 <em>*</em></span>
+              <input type="text" id="ves-add-name" placeholder="예: KUWAIT HARMONY">
+            </label>
+            <label class="form-field">
+              <span class="form-label">약칭</span>
+              <input type="text" id="ves-add-short" placeholder="예: KW HARM">
+            </label>
+            <label class="form-field">
+              <span class="form-label">IMO</span>
+              <input type="text" id="ves-add-imo" placeholder="9999999">
+            </label>
+            <label class="form-field">
+              <span class="form-label">선급</span>
+              <input type="text" id="ves-add-class" placeholder="BV / DNV / ABS ...">
+            </label>
+            <label class="form-field">
+              <span class="form-label">관리사</span>
+              <input type="text" id="ves-add-manager" placeholder="예: Sinokor / CSM">
+            </label>
+            <div class="form-field full">
+              <span class="form-label">담당 감독 <em>*</em> <em class="hint">(복수 선택 가능)</em></span>
+              <div class="admin-chip-group" id="ves-add-sups"></div>
+            </div>
+          </div>
+          <div class="admin-btn-row">
+            <button type="button" class="btn btn-primary" id="btn-ves-add">+ 선박 추가</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 사용자 패널 -->
+      <div class="admin-panel" data-admin-panel="users">
+        <div class="admin-list" id="admin-user-list"></div>
+        <div class="admin-add-form">
+          <h3>새 사용자 추가</h3>
+          <div class="admin-form-grid">
+            <label class="form-field">
+              <span class="form-label">사용자명(ID) <em>*</em></span>
+              <input type="text" id="user-add-username" placeholder="예: ysson" autocomplete="off">
+            </label>
+            <label class="form-field">
+              <span class="form-label">비밀번호 <em>*</em> <em class="hint">(6자 이상)</em></span>
+              <input type="password" id="user-add-password" autocomplete="new-password">
+            </label>
+            <label class="form-field">
+              <span class="form-label">표시 이름</span>
+              <input type="text" id="user-add-display" placeholder="예: 손유석 차장">
+            </label>
+            <label class="form-field">
+              <span class="form-label">권한</span>
+              <select id="user-add-role">
+                <option value="member" selected>일반 사용자</option>
+                <option value="admin">관리자</option>
+              </select>
+            </label>
+            <label class="form-field full">
+              <span class="form-label">연결 감독 <em class="hint">(선택 — 로그인 시 해당 감독 탭 자동 표시)</em></span>
+              <select id="user-add-supervisor">
+                <option value="">(연결 없음)</option>
+              </select>
+            </label>
+          </div>
+          <div class="admin-btn-row">
+            <button type="button" class="btn btn-primary" id="btn-user-add">+ 사용자 추가</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+  <main class="main-content">
+    {% block content %}{% endblock %}
+  </main>
+{% endblock %}
+
+<div class="modal page-manual-modal" id="page-manual-modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-box page-manual-box" role="dialog" aria-modal="true" aria-labelledby="page-manual-title">
+    <div class="modal-head">
+      <h2 id="page-manual-title">설명서</h2>
+      <button class="modal-close" id="page-manual-close" type="button" aria-label="닫기">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="page-manual-body" id="page-manual-body"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="api-modal" hidden style="position:fixed;inset:0;z-index:1000;display:none;align-items:center;justify-content:center;">
+  <div class="modal-backdrop" id="api-modal-bd" style="position:absolute;inset:0;background:rgba(0,0,0,.45);"></div>
+  <div class="modal-box" role="dialog" aria-modal="true"
+       style="position:relative;width:min(760px,94vw);max-height:88vh;overflow:auto;background:#fff;border-radius:12px;padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <h2 style="margin:0;font-size:18px;">외부 연동 데이터 API</h2>
+      <button id="api-modal-x" style="border:none;background:none;font-size:22px;cursor:pointer;line-height:1;">&times;</button>
+    </div>
+    <p style="color:#555;font-size:13px;margin:4px 0 14px;">
+      이 키를 가진 외부 사이트가 아래 주소로 TRMT 데이터를 <strong>읽기 전용(JSON)</strong>으로 가져갈 수 있습니다.
+      출장 경비는 제외됩니다. 키는 외부에 노출되지 않도록 주의하세요.
+    </p>
+
+    <label style="font-size:12px;font-weight:600;color:#333;">API Key</label>
+    <div style="display:flex;gap:6px;margin:4px 0 14px;">
+      <input id="api-key-field" readonly value="불러오는 중..."
+             style="flex:1;font-family:monospace;font-size:13px;padding:8px 10px;border:1px solid #ccc;border-radius:6px;background:#f7f7f8;">
+      <button class="btn btn-outline btn-sm" id="api-key-copy">복사</button>
+      <button class="btn btn-outline btn-sm" id="api-key-regen" title="새 키 발급(기존 키는 즉시 무효)">재발급</button>
+    </div>
+
+    <label style="font-size:12px;font-weight:600;color:#333;">엔드포인트 (Base URL: <span id="api-base"></span>)</label>
+    <div style="margin:4px 0 14px;font-family:monospace;font-size:12.5px;line-height:1.9;color:#222;">
+      <div>GET <strong>/api/ext/all</strong> — 전체(선박·이슈·CS·Vetting·요약·DD·Boarding·일정·Class Status)</div>
+      <div>GET /api/ext/issues — Daily 업무</div>
+      <div>GET /api/ext/surveys — Condition Survey</div>
+      <div>GET /api/ext/vettings — Vetting</div>
+      <div>GET /api/ext/vetting-digests — Vetting 선박별 SIRE 요약(상태·항구·OBS·지적상세)</div>
+      <div>GET /api/ext/dock-reports — Dry Dock</div>
+      <div>GET /api/ext/boarding-reports — Boarding</div>
+      <div>GET /api/ext/calendar — 일정</div>
+      <div>GET /api/ext/summaries — 업무 요약(요약 탭)</div>
+      <div>GET /api/ext/class-status — 선급 Class Status</div>
+    </div>
+    <div style="margin:-8px 0 14px;font-size:11.5px;color:#666;line-height:1.6;">
+      ※ 모든 레코드에는 변하지 않는 고유키 <code>ref</code>(예: <code>vetting:12</code>, <code>vt_finding:34</code>,
+      <code>class_status:5</code>)가 포함됩니다. 외부 사이트에서 특정 데이터를 식별·연동할 때 이 값을 주소처럼 사용하세요.
+      선박 연결은 <code>vessel_key</code>(선명 소문자)로 매칭 가능합니다. (이 키들은 API 응답에만 있고 사이트 화면에는 표시되지 않습니다.)
+
+    <label style="font-size:12px;font-weight:600;color:#333;">호출 예시</label>
+    <pre id="api-example" style="background:#1e1e2e;color:#e6e6e6;padding:12px;border-radius:8px;font-size:12px;overflow:auto;margin:4px 0 4px;"></pre>
+    <p style="color:#777;font-size:12px;margin:6px 0 0;">
+      인증: 헤더 <code>X-API-Key: 키</code> 또는 쿼리 <code>?key=키</code>. 선박 매칭은 <code>vessel_key</code>(선박명 소문자) 사용.
+    </p>
+  </div>
+</div>
+
+<script>
+(function () {
+  const endpoint = {{ request.endpoint|tojson }};
+  const manuals = {
+    dashboard: {
+      title: '대시보드 설명서',
+      sections: [
+        ['화면', ['선박별 주요 업무 현황과 자동화 상태를 한 화면에서 확인합니다.', '카드를 누르면 관련 탭이나 상세 화면으로 이동합니다.']]
+      ]
+    },
+    index: {
+      title: 'Daily 업무관리 설명서',
+      sections: [
+        ['주요 버튼', ['신규 이슈: 선박 업무를 새로 등록합니다.', '수정: 선택한 이슈의 내용, 담당자, 상태, 기한을 변경합니다.', '첨부: 관련 파일을 이슈에 붙입니다.', '요약 생성: 현재 업무 목록 기준으로 보고용 요약을 만듭니다.']]
+      ]
+    },
+    automation_page: {
+      title: '자동화 모음 설명서',
+      sections: [
+        ['기본 동작', ['버튼을 누르면 맥미니가 해당 자동화를 실행하고 텔레그램으로 결과를 보고합니다.', '데쿠를 호출하지 않는 0 LLM 실행이며, 러너 폴링 때문에 최대 약 1분 지연될 수 있습니다.', '검증은 읽기전용 미리보기이고 승인, 상신, 실기입을 하지 않습니다.', '자동승인/자동상신은 스케줄러와 동일하게 clean 건만 처리하고 예외는 남깁니다.', '정기 스케줄러는 버튼 실행과 별개로 그대로 유지됩니다.']],
+        ['마스터 스위치', ['작동중이면 자동화 버튼이 실행됩니다.', '정지됨이면 버튼 실행이 막히며 정기 스케줄러도 안전정지 상태로 둡니다.']],
+        ['SOA 정기검토', ['검증 전체: 4그룹 SOA를 읽기전용으로 점검합니다.', '자동승인 전체: clean 건만 자동 승인하고 예외는 남깁니다.', '리젝체크 전체: 금액 불일치 라인에 리젝 체크만 답니다.', '리젝제출+메일 전체: 리젝 마킹된 SOA를 제출하고 관리사 통보 메일을 보냅니다.']],
+        ['선박별 SOA 검증', ['SVMS 등록 전선박 기준 4자 선박코드를 입력한 뒤 실행합니다.', '기간과 부서를 비우면 202601~202612, Technical 기준으로 실행합니다.', '검증 실기입을 누르면 해당 선박 SOA 라인에 CFM_YN 체크와 금액불일치 RJT_YN 리마크를 기입합니다.', '승인, 출금, 리젝제출, 관리사 메일 발송은 하지 않습니다.', 'GPT 5.4 mini 선택 시 과플래그 가능성이 있어 결과 추가확인을 전제로 봅니다.', '결과는 실행 로그와 텔레그램 보고로 확인합니다.']],
+        ['전자결재', ['검증: 현재 상신대기 문서를 전수 점검해 보류 후보를 표시합니다.', '자동상신: 보류 제외 후 통과 건만 상신합니다.', '실행 결과는 실행 로그와 텔레그램 보고로 확인합니다.']]
+      ]
+    },
+    health_page: {
+      title: '자동화 상태 설명서',
+      sections: [['화면', ['각 자동화 러너, 스케줄러, 최근 실행 상태를 확인합니다.', '오래 멈춘 항목이나 실패 로그가 있는 항목을 우선 점검합니다.']]]
+    },
+    mail_page: {
+      title: '메일 처리 설명서',
+      sections: [['주요 버튼', ['이슈 등록: 메일 내용을 TRMT Daily 업무로 등록합니다.', '기존 이슈에 추가: 메일 내용을 선택한 기존 업무의 후속 조치로 붙입니다.', '회신 작성: 메일 회신 초안을 만들거나 수정합니다.']]]
+    },
+    aor_page: {
+      title: 'AOR 설명서',
+      sections: [['주요 버튼', ['검토: AOR 후보의 금액, 제목, 참조 정보를 확인합니다.', '상신 승인: 확인된 카드만 SVMS 상신 흐름으로 보냅니다.', '보류 또는 제외: 사람이 다시 봐야 하는 건을 자동상신 대상에서 뺍니다.']]]
+    },
+    fundreq_page: {
+      title: '비용청구 설명서',
+      sections: [['주요 버튼', ['검토: DN과 Cost Slip 금액, 통화, 참조번호를 대조합니다.', '자동상신: 일치한 clean 건만 상신합니다.', '보류: 불일치나 근거 부족 건은 사람 확인 대상으로 남깁니다.']]]
+    },
+    invoice_page: {
+      title: '인보이스 설명서',
+      sections: [['주요 버튼', ['일괄승인+컨펌: 체크된 PASS 인보이스만 SVMS confirm 처리합니다.', 'HOLD 항목은 사유를 확인하고 수동 처리합니다.', '필터는 PASS/HOLD/선박/공급업체 기준으로 목록을 좁힙니다.']]]
+    },
+    class_status_page: {
+      title: 'Class Status 설명서',
+      sections: [['주요 버튼', ['동기화/업로드: 선급 status 자료를 가져와 선박별 항목으로 반영합니다.', '상세 보기: survey, certificate, due date 정보를 확인합니다.', '첨부: 근거 파일을 항목에 연결합니다.']]]
+    },
+    condition_survey: {
+      title: 'Condition Survey 설명서',
+      sections: [['주요 버튼', ['신규 수검: 선박과 분기 기준으로 수검 기록을 만듭니다.', 'Report 추출: 첨부 보고서에서 finding을 자동 추출합니다.', 'Finding 추가/수정: 관찰사항과 조치상태를 관리합니다.']]]
+    },
+    vetting_status: {
+      title: 'Vetting Status 설명서',
+      sections: [['주요 버튼', ['신규 Vetting: 검사 기록을 등록합니다.', 'Report 추출: SIRE/검사 보고서에서 OBS와 finding을 뽑습니다.', 'OBS 요약: 선박별 검사 핵심 내용을 요약합니다.']]]
+    },
+    dry_dock_page: {
+      title: 'Dry Dock Report 설명서',
+      sections: [['주요 버튼', ['신규 보고서: 입거 보고서 기본 정보를 만듭니다.', '편집: 섹션, 사진, 본문 블록을 작성합니다.', 'Export: 작성한 보고서를 DOCX 또는 PDF로 내보냅니다.']]]
+    },
+    boarding_page: {
+      title: 'Boarding Report 설명서',
+      sections: [['주요 버튼', ['신규 보고서: 방선 보고서 기본 정보를 만듭니다.', '편집: 점검 항목, 사진, 코멘트를 작성합니다.', 'Export: 작성한 보고서를 DOCX 또는 PDF로 내보냅니다.']]]
+    },
+    reqgen_page: {
+      title: '도크 자재/수리 설명서',
+      sections: [['주요 버튼', ['대기 카드 선택: SVMS에 만들 requisition 후보를 고릅니다.', '템플릿 보기: 입력 형식과 필수값을 확인합니다.', '생성/저장: 선택한 라인을 기준으로 요청서를 만듭니다.']]]
+    },
+    dock_procure_page: {
+      title: 'Dock 발주현황 설명서',
+      sections: [['주요 버튼', ['INDEX 엑셀 업로드: R/S/ST 라인을 큐에 적재합니다.', '직접 추가: 메일 견적이나 수동 항목을 추가합니다.', '상태 변경: 발주, 견적, 완료 상태를 갱신합니다.']]]
+    },
+    krcon_page: {
+      title: '룰 검색 설명서',
+      sections: [['주요 버튼', ['검색: KRCON 문서에서 키워드와 관련 조항을 찾습니다.', 'AI 질의: 검색된 근거를 바탕으로 질문합니다.', '문서 보기: 원문 조항을 확인합니다.']]]
+    },
+    calendar_page: {
+      title: 'Calendar 설명서',
+      sections: [['주요 버튼', ['새 일정: 선박/업무 일정을 등록합니다.', '편집: 날짜, 제목, 담당, 메모를 수정합니다.', '필터: 선박이나 일정 종류별로 달력을 좁힙니다.']]]
+    },
+    expenses_page: {
+      title: '출장 경비 설명서',
+      sections: [['주요 버튼', ['신규 출장: 출장 건을 생성합니다.', '영수증 업로드: 사진에서 금액과 날짜를 추출합니다.', '상세: 출장별 영수증과 정산 내역을 확인합니다.']]]
+    },
+    expense_detail_page: {
+      title: '출장 상세 설명서',
+      sections: [['주요 버튼', ['사진 추가: 영수증 이미지를 올립니다.', '자동 추출: 영수증 정보를 표에 추가합니다.', '수정/삭제: 개별 영수증 라인을 정리합니다.']]]
+    }
+  };
+  const manual = manuals[endpoint] || { title: 'TRMT 설명서', sections: [['현재 탭', ['현재 화면의 버튼과 입력값을 확인한 뒤 필요한 작업을 실행합니다.']]] };
+  const modal = document.getElementById('page-manual-modal');
+  const body = document.getElementById('page-manual-body');
+  const title = document.getElementById('page-manual-title');
+  const openers = [document.getElementById('btn-page-manual'), document.getElementById('btn-page-manual-mobile')].filter(Boolean);
+  const close = document.getElementById('page-manual-close');
+  function render() {
+    title.textContent = manual.title;
+    body.innerHTML = manual.sections.map(([h, items]) =>
+      '<section class="page-manual-section"><h3>' + h + '</h3><ul>' +
+      items.map(v => '<li>' + v + '</li>').join('') + '</ul></section>'
+    ).join('');
+  }
+  function show() {
+    render();
+    const menu = document.getElementById('mobile-menu');
+    const burger = document.getElementById('nav-burger');
+    if (menu && !menu.hidden) {
+      menu.hidden = true;
+      document.body.classList.remove('mm-lock');
+      if (burger) {
+        burger.classList.remove('is-open');
+        burger.setAttribute('aria-expanded', 'false');
+      }
+    }
+    modal.hidden = false;
+    document.body.classList.add('modal-open');
+  }
+  function hide() {
+    modal.hidden = true;
+    document.body.classList.remove('modal-open');
+  }
+  openers.forEach(btn => btn.addEventListener('click', show));
+  close.addEventListener('click', hide);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !modal.hidden) hide();
+  });
+})();
+</script>
+
+<script>
+(function () {
+  const modal = document.getElementById('api-modal');
+  const open = document.getElementById('btn-open-api');
+  if (!open) return;
+  const field = document.getElementById('api-key-field');
+  const base = document.getElementById('api-base');
+  const example = document.getElementById('api-example');
+  let loaded = false;
+
+  function render(key, baseUrl) {
+    field.value = key;
+    base.textContent = baseUrl;
+    example.textContent =
+      'curl -H "X-API-Key: ' + key + '" \\\n     ' + baseUrl + '/api/ext/all\n\n' +
+      '# 또는\n' + baseUrl + '/api/ext/issues?key=' + key;
+  }
+  async function load() {
+    try {
+      const r = await fetch('/api/ext/key');
+      const j = await r.json();
+      render(j.api_key, j.base_url);
+      loaded = true;
+    } catch (e) { field.value = '불러오기 실패'; }
+  }
+  function show() { modal.style.display = 'flex'; modal.hidden = false; if (!loaded) load(); }
+  function hide() { modal.style.display = 'none'; modal.hidden = true; }
+
+  open.addEventListener('click', show);
+  document.getElementById('api-modal-x').addEventListener('click', hide);
+  document.getElementById('api-modal-bd').addEventListener('click', hide);
+  document.getElementById('api-key-copy').addEventListener('click', () => {
+    navigator.clipboard.writeText(field.value).then(() => {
+      const b = document.getElementById('api-key-copy');
+      const t = b.textContent; b.textContent = '복사됨'; setTimeout(() => b.textContent = t, 1200);
+    });
+  });
+  document.getElementById('api-key-regen').addEventListener('click', async () => {
+    if (!confirm('새 키를 발급하면 기존 키는 즉시 사용할 수 없습니다. 진행할까요?')) return;
+    try {
+      const r = await fetch('/api/ext/key/regenerate', { method: 'POST' });
+      const j = await r.json();
+      render(j.api_key, base.textContent);
+      alert('새 API 키가 발급되었습니다. 외부 사이트에 새 키를 전달하세요.');
+    } catch (e) { alert('재발급 실패'); }
+  });
+})();
+</script>
+
+  <script>
+  (function () {
+    const groups = Array.from(document.querySelectorAll('.nav-group'));
+    if (!groups.length) return;
+    function closeAll(except) {
+      groups.forEach(g => { if (g !== except) g.classList.remove('open'); });
+    }
+    groups.forEach(g => {
+      const trig = g.querySelector('.nav-trigger');
+      if (!trig) return;
+      trig.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const willOpen = !g.classList.contains('open');
+        closeAll(g);
+        g.classList.toggle('open', willOpen);
+      });
+    });
+    document.addEventListener('click', () => closeAll(null));
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAll(null); });
+  })();
+  </script>
+
+  <script>
+  (function () {
+    const burger = document.getElementById('nav-burger');
+    const menu = document.getElementById('mobile-menu');
+    const backdrop = document.getElementById('mm-backdrop');
+    if (!burger || !menu) return;
+    function open() {
+      menu.hidden = false;
+      document.body.classList.add('mm-lock');
+      burger.classList.add('is-open');
+      burger.setAttribute('aria-expanded', 'true');
+    }
+    function close() {
+      menu.hidden = true;
+      document.body.classList.remove('mm-lock');
+      burger.classList.remove('is-open');
+      burger.setAttribute('aria-expanded', 'false');
+    }
+    burger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.hidden ? open() : close();
+    });
+    backdrop.addEventListener('click', close);
+    // 링크 누르면 닫기(이동)
+    menu.querySelectorAll('.nav-link').forEach(a => a.addEventListener('click', close));
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    // 데스크탑으로 넓어지면 자동 닫기(상태 충돌 방지)
+    window.addEventListener('resize', () => { if (window.innerWidth >= 769 && !menu.hidden) close(); });
+  })();
+  </script>
+
+
+  <script>
+    window.TRMT = { user: {
+      username: {{ session.get('username')|tojson }},
+      display_name: {{ session.get('display_name')|tojson }},
+      role: {{ session.get('role')|tojson }},
+      supervisor_id: {{ session.get('supervisor_id')|tojson }}
+    } };
+  </script>
+  <script>
+  /* 모든 데이터 입력 모달: backdrop(모달 바깥 어둑한 영역) 클릭으로 닫히지 않게.
+     실수로 바깥을 눌러 입력 내용이 저장 안 된 채 닫히는 것 방지(2026-06-15 손유석 요청).
+     · X·취소 버튼은 backdrop 클래스가 아니므로 정상 닫힘 유지.
+     · 모바일 네비 메뉴(mm-backdrop)는 제외 — 바깥 클릭 닫힘이 정상 UX.
+     · capture 단계에서 backdrop 클릭만 전파 차단 → 각 모달의 close 핸들러가 안 불림. */
+  document.addEventListener('click', function (ev) {
+    var t = ev.target;
+    if (t && t.classList &&
+        (t.classList.contains('modal-backdrop') || t.classList.contains('dde-modal-backdrop'))) {
+      ev.stopPropagation();
+    }
+  }, true);
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

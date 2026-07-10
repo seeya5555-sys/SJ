@@ -1,0 +1,396 @@
+{% extends "base.html" %}
+{% block title %}자동화 모음 · TRMT3{% endblock %}
+{% block head %}
+<style>
+  .au-wrap{max-width:920px}
+  .au-master{display:flex;align-items:center;gap:12px;padding:12px 15px;border:1px solid var(--border);border-radius:12px;background:#fff;margin-bottom:16px}
+  .au-master.off{background:var(--red-bg);border-color:var(--red-border)}
+  .au-master b{font-size:14px}
+  .au-master .au-sub{color:var(--text-secondary);font-size:12.5px}
+  .au-ks{margin-left:auto;border:1px solid var(--border-strong);background:var(--surface-3);border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;font-size:13px}
+  .au-ks.on{background:var(--green-bg);border-color:var(--green-border);color:var(--green)}
+  .au-ks.off{background:var(--red-bg);border-color:var(--red-border);color:var(--red)}
+  .au-sec{margin:18px 0 8px;font-size:13px;font-weight:700;color:var(--text-secondary);letter-spacing:.3px}
+  .au-row{display:flex;align-items:center;gap:10px;padding:12px 15px;border:1px solid var(--border);border-radius:11px;background:#fff;margin-bottom:9px;flex-wrap:wrap}
+  .au-name{font-weight:600;color:var(--text-primary);min-width:0}
+  .au-name .au-desc{display:block;font-size:12px;color:var(--text-secondary);font-weight:400;margin-top:2px}
+  .au-btns{margin-left:auto;display:flex;gap:7px;flex-wrap:wrap}
+  .au-b{border-radius:8px;padding:7px 13px;font-weight:700;font-size:12.5px;cursor:pointer;border:1px solid transparent;white-space:nowrap}
+  .au-b.verify{background:var(--blue-bg);color:var(--blue);border-color:var(--blue-border)}
+  .au-b.live{background:var(--blue);color:#fff}
+  .au-b.live.money{background:var(--amber)}
+  .au-b.rjt{background:var(--amber-bg);color:var(--amber);border-color:var(--amber-border)}
+  .au-b.rjt2{background:var(--red);color:#fff}
+  .au-b:disabled{opacity:.45;cursor:not-allowed}
+  .au-status{font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:999px}
+  .st-queued{background:var(--amber-bg);color:var(--amber)}.st-running{background:var(--blue-bg);color:var(--blue)}
+  .st-done{background:var(--green-bg);color:var(--green)}.st-failed{background:var(--red-bg);color:var(--red)}
+  .au-log{margin-top:22px}
+  .au-log-head{display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 4px;border-radius:8px;user-select:none}
+  .au-log-head:hover{background:var(--surface-2)}
+  .au-log-caret{font-size:12px;color:var(--text-secondary);transition:transform .12s;display:inline-block}
+  .au-log-head.open .au-log-caret{transform:rotate(90deg)}
+  .au-log h3{font-size:13px;font-weight:700;color:var(--text-secondary);margin:0}
+  .au-log-meta{font-size:11.5px;color:var(--text-secondary);display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+  .au-log-clear{margin-left:auto;border:1px solid var(--red-border);background:var(--red-bg);color:var(--red);border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .au-log-clear:disabled{opacity:.45;cursor:not-allowed}
+  #au-runs{margin-top:8px}
+  .au-log-cleared{font-size:11px;color:var(--text-tertiary);margin-top:6px;padding-left:4px}
+  .au-logrow{border:1px solid var(--border-subtle);border-radius:9px;padding:9px 12px;margin-bottom:7px;background:#fff;font-size:12.5px}
+  .au-logmeta{color:var(--text-secondary);font-size:11.5px;margin-bottom:3px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .au-logsum{white-space:pre-wrap;color:var(--text-primary);font-family:ui-monospace,Menlo,monospace;font-size:11.5px;max-height:170px;overflow:auto}
+  .au-note{font-size:12px;color:var(--text-secondary);margin:4px 0 16px;line-height:1.5}
+  /* 전자결재 검증 인라인 체크리스트 */
+  .jl{max-width:920px;margin:2px 0 4px}
+  .jl-head{display:flex;align-items:center;gap:8px;cursor:pointer;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);user-select:none;font-size:13px;font-weight:700;color:var(--text-secondary)}
+  .jl-head:hover{background:var(--surface-3)}
+  .jl-caret{font-size:12px;transition:transform .12s;display:inline-block;color:var(--text-tertiary)}
+  .jl-head.open .jl-caret{transform:rotate(90deg)}
+  .jl-headmeta{font-weight:400;font-size:11.5px;color:var(--text-tertiary);margin-left:auto;text-align:right}
+  .jl-body{margin-top:8px}
+  .jl-rev{font-size:11.5px;color:var(--text-tertiary);margin:2px 0 8px;line-height:1.5}
+  .jl-grp{font-size:12px;font-weight:700;color:var(--text-secondary);margin:12px 0 5px}
+  .jl-item{display:flex;align-items:center;gap:9px;padding:8px 12px;border:1px solid var(--border-subtle);border-radius:9px;background:#fff;margin-bottom:6px;font-size:12.5px;flex-wrap:wrap}
+  .jl-item.excl{background:var(--amber-bg);border-color:var(--amber-border)}
+  .jl-item.mis{background:var(--red-bg);border-color:var(--red-border)}
+  .jl-item.mis .jl-why{color:var(--red)}
+  .jl-item.human{background:var(--surface-2)}
+  .jl-bkt.bkt-mis{background:var(--red-bg);color:var(--red);border:1px solid var(--red-border)}
+  .jl-note{font-size:11px;color:var(--text-tertiary)}
+  .jl-ref{font-weight:700;color:var(--text-primary);white-space:nowrap}
+  .jl-sub{color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:60px;flex:1}
+  .jl-amt{color:var(--text-tertiary);font-size:11.5px;white-space:nowrap}
+  .jl-why{color:var(--amber);font-size:11.5px}
+  .jl-bkt{font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:999px;background:var(--surface-3);color:var(--text-secondary);white-space:nowrap}
+  .jl-hold{font-size:10.5px;font-weight:700;color:var(--amber);background:var(--amber-bg);border:1px solid var(--amber-border);padding:1px 7px;border-radius:999px;white-space:nowrap}
+  .jl-chk{display:flex;align-items:center;gap:6px;margin-left:auto;font-size:11.5px;color:var(--text-secondary);white-space:nowrap;cursor:pointer;user-select:none}
+  .jl-chk input{width:15px;height:15px;cursor:pointer;accent-color:var(--amber)}
+  .jl-empty{font-size:12px;color:var(--text-tertiary);padding:6px 2px}
+  .au-allrow{background:var(--surface-2);border-style:dashed}
+</style>
+{% endblock %}
+{% block content %}
+<h1 class="page-title">🤖 자동화 모음</h1>
+<div class="au-wrap">
+  <div class="au-master" id="au-master">
+    <div>
+      <b>마스터 스위치</b>
+      <span class="au-sub" id="au-master-sub">— 전체 자동화 on/off (킬스위치)</span>
+    </div>
+    <button class="au-ks" id="au-ks">…</button>
+  </div>
+
+  <div id="au-soa" class="jl"></div>
+
+  <div class="au-sec">선박별 SOA 검증 (온디맨드)</div>
+  <div id="au-vessel" style="max-width:920px">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)">
+      <input id="sv-vsl" placeholder="선박코드 (예: SVGW,SAPS)" autocomplete="off"
+             style="text-transform:uppercase;width:190px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+      <input id="sv-fm" placeholder="시작 YYYYMM" maxlength="6" inputmode="numeric"
+             style="width:110px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+      <input id="sv-to" placeholder="끝 YYYYMM" maxlength="6" inputmode="numeric"
+             style="width:110px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+      <select id="sv-tp" style="padding:6px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+        <option value="05">Technical (05)</option><option value="04">Crew (04)</option></select>
+      <select id="sv-review-model" title="SOA 검증 LLM 모델"
+              style="padding:6px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+        <option value="auto">Auto / 안전기본</option>
+        <option value="claude-haiku-4-5">Haiku</option>
+        <option value="openai/gpt-5.4-mini">GPT 5.4 mini (추가확인)</option>
+      </select>
+      <button class="au-b live" id="sv-live" type="button">▶ 검증 실기입</button>
+    </div>
+  </div>
+
+  <div class="au-sec">전자결재</div>
+  <div id="au-jeonja"></div>
+  <div id="au-jeonja-list" class="jl"></div>
+
+  <div class="au-log">
+    <div class="au-log-head" id="au-log-head">
+      <span class="au-log-caret" id="au-log-caret">▸</span>
+      <h3>실행 로그 (audit)</h3>
+      <span class="au-log-meta" id="au-log-meta"></span>
+      <button class="au-log-clear" id="au-log-clear" type="button" title="완료/실패 로그 비우기 (진행중은 보존)">🗑 비우기</button>
+    </div>
+    <div id="au-runs" hidden></div>
+    <div class="au-log-cleared" id="au-log-cleared"></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const SOA=['soa_g1','soa_g2','soa_g3','soa_skrt'];
+  let TASKS={}, ENABLED=true, RUNS=[], TOTAL=0, CLEARED=null, LOG_OPEN=false;
+  let LOG_SCROLLS={}, LOG_SIG=null;
+  let JLIST=[], JREV=null, JSIG='', JPENDING={}, JOPEN=false;   // JPENDING: POST in-flight ref→excluded(폴링이 덮어쓰지 않게) / JOPEN: 리스트 펼침(기본 접힘)
+  let SOPEN=false;   // SOA 섹션 펼침(기본 접힘)
+  const JBKT={pass:'✅ 통과',costslip:'📄 CostSlip',mismatch:'⚠️ DN≠Cost',escalate:'🚨 차액≥$1k',flag:'✋ 사람확인',already:'✔️ 이미결재'};
+  const escA=s=>String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  const $=s=>document.querySelector(s);
+  const esc=s=>String(s).replace(/</g,'&lt;');
+  async function api(method,url,body){
+    const o={method,headers:{}};
+    if(body){o.headers['Content-type']='application/json';o.body=JSON.stringify(body);}
+    const r=await fetch(url,o); let j={}; try{j=await r.json();}catch(e){}
+    return {ok:r.ok,j};
+  }
+  function latestFor(task,mode){
+    return RUNS.find(r=>r.task===task&&(!mode||r.mode===mode));
+  }
+  function statusChip(task){
+    const r=RUNS.find(x=>x.task===task&&(x.status==='queued'||x.status==='running'));
+    if(!r) return '';
+    return `<span class="au-status st-${r.status}">${r.status==='queued'?'대기중':'실행중…'}</span>`;
+  }
+  function busy(task){ return !!RUNS.find(x=>x.task===task&&(x.status==='queued'||x.status==='running')); }
+  function row(task,opts){
+    const name=TASKS[task]||task;
+    const b=busy(task)||!ENABLED;
+    const dis=b?'disabled':'';
+    let btns='';
+    if(opts.resend){
+      btns=`<button class="au-b live" data-task="${task}" data-mode="verify" ${dis}>📨 재발송</button>`;
+    } else if(opts.money){   // 전자결재
+      btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}>🔍 검증</button>
+            <button class="au-b live money" data-task="${task}" data-mode="live" ${dis}>▶ 자동상신</button>`;
+    } else if(opts.prep){    // AOR prep — Submitted AOR 카드화(/aor 큐 적재). 상신 아님(읽기+적재)
+      btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}>▶ AOR prep 실행 (/aor 큐 적재)</button>`;
+    } else {                 // SOA 그룹: 승인 + 리젝 워크플로우
+      btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}>🔍 검증</button>
+            <button class="au-b live" data-task="${task}" data-mode="live" ${dis}>▶ 자동승인</button>
+            <button class="au-b rjt" data-task="${task}" data-mode="reject_mark" ${dis}>🟥 리젝체크</button>
+            <button class="au-b rjt2" data-task="${task}" data-mode="reject_submit" ${dis}>📤 리젝제출+메일</button>
+            <button class="au-b verify" data-task="${task}" data-mode="remark_cleanup" ${dis}>🧹 리마크정리</button>`;
+    }
+    return `<div class="au-row"><div class="au-name">${name}${statusChip(task)}</div><div class="au-btns">${btns}</div></div>`;
+  }
+  function fmt(r){
+    const t=r.finished_at||r.started_at||r.requested_at||'';
+    const modeL={live:'실행',reject_mark:'리젝체크',reject_submit:'리젝제출',remark_cleanup:'리마크정리'}[r.mode]||'검증';
+    return `<div class="au-logrow" data-run-id="${escA(r.run_id||'')}">
+      <div class="au-logmeta">
+        <span class="au-status st-${r.status}">${r.status}</span>
+        <b>${TASKS[r.task]||r.task}</b><span>· ${modeL}</span><span>· ${t}</span>
+      </div>
+      ${r.summary?`<div class="au-logsum">${(r.summary).replace(/</g,'&lt;')}</div>`:''}
+    </div>`;
+  }
+  function render(){const _sy=window.scrollY;try{return _render();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
+  function _render(){
+    const ks=$('#au-ks'), m=$('#au-master');
+    ks.textContent=ENABLED?'● 작동중':'■ 정지됨';
+    ks.className='au-ks '+(ENABLED?'on':'off');
+    m.className='au-master'+(ENABLED?'':' off');
+    $('#au-master-sub').textContent=ENABLED?'— 전체 자동화 ON. 버튼이 작동합니다.':'— 킬스위치 ON. 모든 자동화 정지중.';
+    renderSoa();
+    $('#au-jeonja').innerHTML=row('jeonja',{money:true});
+    renderJeonja();
+    renderLog();
+    document.querySelectorAll('.au-b[data-task],.au-b[data-all]').forEach(btn=>btn.onclick=onRun);
+  }
+  function jAmt(it){
+    const dn=it.dn?esc(it.dn):'', cost=(it.cost!==null&&it.cost!==undefined)?esc(it.cost):'';
+    if(!dn&&!cost) return '';
+    return `<span class="jl-amt">${dn}${(dn&&cost)?' / Cost ':(cost?'Cost ':'')}${cost}</span>`;
+  }
+  function jrow(it){
+    if(it.bucket==='already'){   // 이미결재 — 상신 불필요, 읽기전용
+      return `<div class="jl-item human">
+        <span class="jl-bkt">${JBKT.already}</span>
+        <span class="jl-ref">${esc(it.ref)}</span>
+        <span class="jl-sub">${esc(it.subj||'')}</span>
+        <span class="jl-why">상신 불필요</span>
+      </div>`;
+    }
+    const ex=it.excluded?1:0, isMis=it.bucket==='mismatch';
+    const cls='jl-item'+(isMis?' mis':(ex?' excl':''));
+    const badge = it.bucket==='pass' ? '' :
+      `<span class="jl-bkt${isMis?' bkt-mis':''}">${JBKT[it.bucket]||esc(it.bucket)}</span>`;
+    return `<div class="${cls}">
+      ${badge}
+      <span class="jl-ref">${esc(it.ref)}</span>
+      <span class="jl-sub">${esc(it.subj||'')}</span>${jAmt(it)}
+      ${it.why?`<span class="jl-why">${esc(it.why)}</span>`:''}
+      ${ex?'<span class="jl-hold">보류</span>':''}
+      <label class="jl-chk"><input type="checkbox" ${ex?'checked':''} data-xref="${escA(it.ref)}"> 상신 제외</label>
+    </div>`;
+  }
+  function renderJeonja(){
+    const el=$('#au-jeonja-list'); if(!el) return;
+    const sig=JSON.stringify(JLIST)+'|'+JREV+'|'+JOPEN;
+    if(sig===JSIG) return;   // 변화 없으면 재그리기 안 함(체크 중 깜빡임 방지)
+    JSIG=sig;
+    if(!JLIST.length){ el.innerHTML=`<div class="jl-empty">검증 결과 없음 — 🔍검증을 누르면 현재 상신대기 전자결재를 전수 검토해 여기 띄웁니다.</div>`; return; }
+    const sub=JLIST.filter(x=>x.bucket!=='already'), already=JLIST.filter(x=>x.bucket==='already');
+    const nHold=sub.filter(x=>x.excluded).length;
+    let body=`<div class="jl-rev">검토시각 ${JREV||'-'} · 상신대상 ${sub.length}건 중 보류 ${nHold}건 · ▶자동상신 시 <b>${sub.length-nHold}건</b> 상신 예정`+
+      `<br><span class="jl-note">미체크=상신 / 불일치(DN≠Cost)는 기본 보류(빨강) — 직접 풀어야 상신</span></div>`;
+    body+=`<div class="jl-grp">상신 대상 — 체크 = 보류(상신 제외)</div>`;
+    body+= sub.length?sub.map(jrow).join(''):`<div class="jl-empty">상신 대상 없음</div>`;
+    if(already.length){
+      body+=`<div class="jl-grp">✔️ 이미결재 — 상신 불필요</div>`;
+      body+=already.map(jrow).join('');
+    }
+    // 접기 헤더 — 기본 접힘. 헤더에 요약(상신대상/보류/시각) 표시해 펼치지 않아도 파악 가능.
+    const meta=`상신대상 ${sub.length} · 보류 ${nHold}${already.length?` · 이미결재 ${already.length}`:''} · ${JREV||'-'}`;
+    el.innerHTML=`<div class="jl-head${JOPEN?' open':''}" id="jl-head"><span class="jl-caret">▸</span>전자결재 검증결과<span class="jl-headmeta">${meta}</span></div>`+
+      `<div class="jl-body" ${JOPEN?'':'hidden'}>${body}</div>`;
+    $('#jl-head').onclick=()=>{ JOPEN=!JOPEN; JSIG=''; renderJeonja(); };
+    el.querySelectorAll('input[data-xref]').forEach(c=>c.onchange=()=>toggleExcl(c.dataset.xref,c.checked));
+  }
+  function renderSoa(){
+    const el=$('#au-soa'); if(!el) return;
+    const anyBusy=SOA.some(busy);
+    const dEn=(!ENABLED)?'disabled':'';                 // 검증은 ENABLED만 보면 됨
+    const dAll=(!ENABLED||anyBusy)?'disabled':'';        // 실행계열은 진행중이면도 막음
+    const allRow=`<div class="au-row au-allrow"><div class="au-name">⚡ SOA 전체 한방에<span class="au-desc">4그룹·16척 일괄 적재 → 러너가 순차 실행</span></div>`+
+      `<div class="au-btns">`+
+      `<button class="au-b verify" data-all="verify" ${dEn}>🔍 검증 전체</button>`+
+      `<button class="au-b live" data-all="live" ${dAll}>▶ 자동승인 전체</button>`+
+      `<button class="au-b rjt" data-all="reject_mark" ${dAll}>🟥 리젝체크 전체</button>`+
+      `<button class="au-b rjt2" data-all="reject_submit" ${dAll}>📤 리젝제출+메일 전체</button>`+
+      `</div></div>`;
+    const body=allRow+SOA.map(t=>row(t,{money:false})).join('')+row('soa_resend',{resend:true});
+    el.innerHTML=`<div class="jl-head${SOPEN?' open':''}" id="soa-head"><span class="jl-caret">▸</span>SOA 정기검토 · 자동승인<span class="jl-headmeta">4그룹·16척</span></div>`+
+      `<div class="jl-body" ${SOPEN?'':'hidden'}>${body}</div>`;
+    $('#soa-head').onclick=()=>{ SOPEN=!SOPEN; renderSoa(); };
+    el.querySelectorAll('.au-b').forEach(b=>b.onclick=onRun);   // toggle 단독 재호출 시도 동작하게
+  }
+  async function runAllSoa(mode){
+    const lab={verify:'검증',live:'자동승인',reject_mark:'리젝체크',reject_submit:'리젝제출+메일'}[mode];
+    const msg={
+      live:`[SOA 전체 4그룹·16척]\n자동승인을 지금 실행할까요?\n(clean 건만 자동 처리, 예외 미처리·텔레그램 보고 / 그룹별 순차 실행)`,
+      reject_mark:`[SOA 전체 4그룹·16척]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
+      reject_submit:`[SOA 전체 4그룹·16척]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
+    }[mode];
+    if(msg && !confirm(msg)) return;
+    let ok=0,busy_=0,fail=0;
+    for(const t of SOA){
+      const {ok:o,j}=await api('POST','/api/automation/run',{task:t,mode});
+      if(o) ok++; else if(j&&/대기|진행|killswitch|정지/.test(j.error||'')) busy_++; else fail++;
+    }
+    await load();
+    alert(`SOA 전체 ${lab}: ${ok}그룹 적재${busy_?` · ${busy_}그룹 이미대기/스위치off`:''}${fail?` · ${fail}그룹 실패`:''}\n(러너가 순차 실행 → 텔레그램 보고)`);
+  }
+  async function toggleExcl(ref,checked){
+    JPENDING[ref]=checked?1:0;                // in-flight: 폴링 머지가 이 값을 덮어쓰지 않게
+    const it=JLIST.find(x=>x.ref===ref); if(it) it.excluded=checked?1:0;
+    JSIG=''; renderJeonja();                  // 낙관적 갱신
+    const {ok,j}=await api('POST','/api/automation/jeonja/exclude',{ref,excluded:checked});
+    delete JPENDING[ref];
+    if(!ok){ alert((j&&j.error)||'변경 실패'); if(it) it.excluded=checked?0:1; JSIG=''; renderJeonja(); }
+  }
+  function renderLog(){
+    const head=$('#au-log-head'), runsEl=$('#au-runs'), metaEl=$('#au-log-meta');
+    head.classList.toggle('open',LOG_OPEN);
+    $('#au-log-caret').textContent='▸';
+    // 접힘 요약: N건 · 진행중 · 최근 실패
+    const active=RUNS.filter(r=>r.status==='queued'||r.status==='running').length;
+    const lastFail=RUNS.find(r=>r.status==='failed');
+    let meta=`총 ${TOTAL}건`;
+    if(active) meta+=` · <span style="color:#185FA5;font-weight:700">진행중 ${active}</span>`;
+    if(lastFail) meta+=` · <span style="color:#A32D2D;font-weight:700">최근 실패 있음</span>`;
+    metaEl.innerHTML=meta;
+    // 펼침일 때만 리스트 DOM 렌더(비용↓)
+    runsEl.hidden=!LOG_OPEN;
+    if(LOG_OPEN){
+      runsEl.querySelectorAll('.au-logrow[data-run-id]').forEach(row=>{
+        const box=row.querySelector('.au-logsum');
+        if(box&&row.dataset.runId) LOG_SCROLLS[row.dataset.runId]=box.scrollTop;
+      });
+      const html=RUNS.length?RUNS.map(fmt).join(''):'<div class="au-note">아직 실행 기록 없음.</div>';
+      if(html!==LOG_SIG||!runsEl.innerHTML){
+        runsEl.innerHTML=html;
+        LOG_SIG=html;
+      }
+      const ids=new Set(RUNS.map(r=>String(r.run_id||'')));
+      Object.keys(LOG_SCROLLS).forEach(k=>{ if(!ids.has(k)) delete LOG_SCROLLS[k]; });
+      runsEl.querySelectorAll('.au-logrow[data-run-id]').forEach(row=>{
+        const box=row.querySelector('.au-logsum'), y=LOG_SCROLLS[row.dataset.runId];
+        if(box&&row.dataset.runId&&y!==undefined) box.scrollTop=y;
+      });
+    }
+    $('#au-log-clear').disabled=!RUNS.some(r=>r.status==='done'||r.status==='failed');
+    const cl=$('#au-log-cleared');
+    cl.textContent=CLEARED?`마지막 비움: ${CLEARED.at} · ${CLEARED.by||'?'} · ${CLEARED.n}건 삭제`:'';
+  }
+  async function onRun(e){
+    const btn=e.currentTarget||e.target;
+    if(btn.dataset.all){ return runAllSoa(btn.dataset.all); }  // SOA 전체 한방에
+    const task=btn.dataset.task, mode=btn.dataset.mode;
+    if(!task||!mode){ console.warn('automation button missing task/mode', btn); return; }  // 스타일용 .au-b가 잘못 바인딩돼도 빈 task/mode POST 금지
+    const nm=TASKS[task]||task;
+    const confirmMsg={
+      live: `[${nm}]\n자동 ${(task==='jeonja'||task==='fundreq')?'상신':'승인'}을 지금 실행할까요?\n(clean 건만 자동 처리, 예외는 미처리·텔레그램 보고)`,
+      reject_mark: `[${nm}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
+      reject_submit: `[${nm}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
+      remark_cleanup: `[${nm}]\n컨펌(CFM_YN=Y)된 라인인데 리젝 리마크가 남아있는 것들의 리마크만 삭제합니다.\n(승인·금액·상태 무변경 — SVMS UI 버그 보정)`,
+    }[mode];
+    let cm=confirmMsg;
+    if(mode==='live' && task==='jeonja'){   // 보류 반영 건수 명시(돈 안전)
+      const sub=JLIST.filter(x=>x.bucket!=='already'), ex=sub.filter(x=>x.excluded).length;
+      cm=`[전자결재 자동상신]\n상신대상 ${sub.length}건 중 보류 ${ex}건 제외 → ${sub.length-ex}건 상신.\n(불일치 기본보류·상신직전 STATUS 재확인)\n진행할까요?`;
+    }
+    if(cm && !confirm(cm))return;
+    e.target.disabled=true;
+    const {ok,j}=await api('POST','/api/automation/run',{task,mode});
+    if(!ok){alert(j.error||'실행 실패');}
+    await load();
+  }
+  async function toggleKs(){
+    const {ok,j}=await api('POST','/api/automation/killswitch',{enabled:!ENABLED});
+    if(ok){ENABLED=j.enabled;render();}
+  }
+  async function load(){const _sy=window.scrollY;try{return await _load();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
+  async function _load(){
+    const {ok,j}=await api('GET','/api/automation/runs');
+    if(!ok)return;
+    TASKS=j.tasks||{};ENABLED=j.enabled!==false;RUNS=j.runs||[];
+    TOTAL=j.total||RUNS.length;CLEARED=j.cleared||null;
+    const ji=await api('GET','/api/automation/jeonja/items');
+    if(ji.ok){
+      JLIST=ji.j.items||[]; JREV=ji.j.reviewed_at||null;
+      for(const it of JLIST){ if(it.ref in JPENDING) it.excluded=JPENDING[it.ref]; }  // in-flight 토글 보존
+    }
+    render();
+  }
+  async function clearLog(){
+    if(!confirm('완료/실패 실행 로그를 비웁니다.\n(진행중 작업은 보존됩니다)\n진행할까요?'))return;
+    const {ok,j}=await api('DELETE','/api/automation/runs');
+    if(ok){ alert(`로그 ${j.deleted}건 삭제됨`); await load(); }
+    else { alert((j&&j.error)||'삭제 실패'); }
+  }
+  async function runVessel(mode){
+    const codes=($('#sv-vsl').value||'').trim().toUpperCase().split(/[\s,;/]+/).filter(Boolean);
+    const seen=new Set(), vessels=[];
+    for(const c of codes){
+      if(!/^[A-Z]{4}$/.test(c)){ alert('선박코드(4자 영문)를 정확히 입력하세요.'); return; }
+      if(!seen.has(c)){ vessels.push(c); seen.add(c); }
+    }
+    if(!vessels.length){ alert('선박코드(4자 영문)를 정확히 입력하세요.'); return; }
+    if(vessels.length>5){ alert('선박별 SOA 검증은 한 번에 최대 5척까지 실행합니다.'); return; }
+    const fm=($('#sv-fm').value||'').trim(), to=($('#sv-to').value||'').trim(), sl=$('#sv-tp').value;
+    const reviewModel=$('#sv-review-model').value||'auto';
+    if((fm&&!/^\d{6}$/.test(fm))||(to&&!/^\d{6}$/.test(to))){ alert('기간은 YYYYMM 형식.'); return; }
+    const params=vessels.length===1?{vsl_cd:vessels[0]}:{vsl_cds:vessels}; if(fm)params.fm_dm=fm; if(to)params.to_dm=to; if(sl)params.sl_tp=sl;
+    params.review_model=reviewModel;
+    const modelWarn = reviewModel==='openai/gpt-5.4-mini' ? '\n\nGPT 5.4 mini는 과플래그 가능성이 있어 결과 추가확인 전제로 실행합니다.' : '';
+    const title=vessels.length===1?vessels[0]:`${vessels.join(', ')} (${vessels.length}척)`;
+    if(mode==='live' && !confirm(`[선박별 SOA 검증 — ${title}]\n검증 실기입(CFM_YN 체크 + 금액불일치 RJT_YN 리마크)을 실행합니다.\n승인·출금·리젝제출·관리사메일은 안 합니다.${modelWarn}\n진행할까요?`)) return;
+    const {ok,j}=await api('POST','/api/automation/run',{task:'soa_vessel',mode,params});
+    if(!ok){ alert(j.error||'실행 실패'); return; }
+    if(j.count>1){ alert(`선박별 SOA 검증 ${j.count}건을 큐에 넣었습니다.`); }
+    await load();
+  }
+  $('#sv-live').onclick=()=>runVessel('live');
+  $('#au-ks').onclick=toggleKs;
+  $('#au-log-head').onclick=(e)=>{ if(e.target.closest('#au-log-clear'))return; LOG_OPEN=!LOG_OPEN; renderLog(); };
+  $('#au-log-clear').onclick=(e)=>{ e.stopPropagation(); clearLog(); };
+  load();
+  setInterval(load,7000);  // 상태/로그 자동 갱신
+})();
+</script>
+{% endblock %}
