@@ -28,9 +28,13 @@ def main():
 
     payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     rows = payload.get("vessels", payload if isinstance(payload, list) else [])
+    # 잘못된 데이터(예: 최강림 담당으로 잘못 들어온 BRUNEI PROSPERITY)는
+    # vmaster에 다시 나타나더라도 1팀 사이트 로스터에 재유입되지 않게 영구 제외. (2026-07-10)
+    EXCLUDE_VESSEL_NAMES = {"BRUNEI PROSPERITY"}
     vessels = [
         r for r in rows
         if clean(r.get("team")).upper() == "TRMT1" and clean(r.get("name"))
+        and clean(r.get("name")).upper() not in EXCLUDE_VESSEL_NAMES
     ]
     if not vessels:
         raise SystemExit("no TRMT1 vessels found")
@@ -104,9 +108,12 @@ def main():
                     "vsl_cd": clean(r.get("code")),
                     "active": 1,
                 }
-                cur = conn.execute("SELECT id FROM vessels WHERE name=?", (name,)).fetchone()
+                cur = conn.execute("SELECT id, vessel_type FROM vessels WHERE name=?", (name,)).fetchone()
                 if cur:
                     vid = cur["id"]
+                    # 수동/일괄로 이미 지정된 선종(예: VLCC 일괄변경)은 재import 시 보존. (2026-07-10)
+                    if clean(cur["vessel_type"]):
+                        values["vessel_type"] = clean(cur["vessel_type"])
                     conn.execute(
                         """
                         UPDATE vessels
