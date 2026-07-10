@@ -11389,6 +11389,7 @@ def _fleet_from_registered_vessels():
           JOIN supervisors s ON s.id = sv.supervisor_id AND s.active=1
           LEFT JOIN vessel_positions vp ON vp.vessel_id = v.id
          WHERE v.active=1
+           AND v.name <> '전체공지'
          GROUP BY v.id
          ORDER BY v.name
     ''')

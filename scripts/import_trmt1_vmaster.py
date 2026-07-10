@@ -159,14 +159,15 @@ def main():
                         (vid, sid),
                     )
 
-            # 1팀 사이트는 vmaster TRMT1 로스터가 권위다. 기존 테스트/수기 선박 중
-            # 이번 로스터에 없는 것은 숨김 처리하되 이력 데이터는 보존한다.
+            # 1팀 사이트 선박 로스터는 vmaster TRMT1이 권위다. 다만 김석진 팀장님
+            # 공지용 pseudo-vessel("전체공지")은 Daily 공지 카드 작성용이라 보존한다.
             placeholders = ",".join("?" for _ in imported_ids)
             conn.execute(
                 f"""
                 UPDATE vessels
                    SET active=0, updated_at=datetime('now','localtime')
                  WHERE id NOT IN ({placeholders})
+                   AND name <> '전체공지'
                 """,
                 imported_ids,
             )
